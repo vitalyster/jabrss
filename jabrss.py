@@ -1314,6 +1314,7 @@ class JabberSessionEventHandler:
 
                     if len(new_items) > 0:
                         need_unlock = 1
+                        deliver_users = []
                         uids = storage.get_resource_uids(resource)
                         for uid in uids:
                             try:
@@ -1323,18 +1324,20 @@ class JabberSessionEventHandler:
                                     user.update_headline(resource,
                                                          last_item_id,
                                                          new_items)
-
-                                    # we need to unlock the resource
-                                    # here to prevent deadlock (the
-                                    # main thread, which is needed for
-                                    # sending, might be blocked
-                                    # waiting to acquire resource)
-                                    resource.unlock(); need_unlock = 0
-                                    self._send_headlines(jab_session_proxy, user,
-                                                         resource, new_items, 1)
+                                    deliver_users.append(user)
                             except KeyError:
                                 # just means that the user is no longer online
                                 pass
+
+                        # we need to unlock the resource here to
+                        # prevent deadlock (the main thread, which is
+                        # needed for sending, might be blocked waiting
+                        # to acquire resource)
+                        resource.unlock(); need_unlock = 0
+
+                        for user in deliver_users:
+                            self._send_headlines(jab_session_proxy, user,
+                                                 resource, new_items, 1)
                 except:
                     print 'exception caught updating', resource.url()
                     traceback.print_exc(file=sys.stdout)
