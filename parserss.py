@@ -242,17 +242,17 @@ class Gzip_Decompressor:
         return res
 
     def flush(self):
-        res = None
-        while (res == None) and self._state_feed:
+        data = ''
+        while self._state_feed:
             res = self._state_feed(self)
 
             if res:
                 self._update_crc(res)
+                data += res
+            elif res == '' and self._state_feed != None:
+                raise IOError, 'premature EOF'
 
-        if self._state_feed:
-            raise IOError, "premature EOF"
-
-        return res
+        return data
 
     def _feed_header_static(self):
         if len(self._buffer) >= 10:
@@ -1002,7 +1002,7 @@ class RSS_Resource:
         return self._history
 
 
-    # @return ([item], next_item_id, redirect_resource)
+    # @return ([item], next_item_id, redirect_resource, redirect_seq, [redirects])
     # locks the resource object if new_items are returned
     def update(self, db=None, redirect_count=5):
         error_info = None
@@ -1464,7 +1464,8 @@ if __name__ == '__main__':
     if len(sys.argv) >= 2:
         resource = RSS_Resource(sys.argv[1])
 
-        channel_info, new_items, next_item_id = resource.update()
-        print channel_info.title, channel_info.link, channel_info.descr
+        new_items, next_item_id, redirect_resource, redirect_seq, redirects = resource.update()
+        channel_info = resource.channel_info()
+        print channel_info.title.encode('iso8859-1', 'replace'), channel_info.link.encode('iso8859-1', 'replace'), channel_info.descr.encode('iso8859-1', 'replace')
         if len(new_items) > 0:
-            print 'new items', map(lambda x: (x.title, x.link), new_items), next_item_id
+            print 'new items', map(lambda x: (x.title.encode('iso8859-1', 'replace'), x.link.encode('iso8859-1', 'replace')), new_items), next_item_id

@@ -235,16 +235,13 @@ class DataStorage:
         simple_url = RSS_Resource_simplify(url)
         return self._resources[simple_url]
 
-    def get_resource_by_id(self, res_id):
+    def get_resource_by_id(self, res_id, res_cursor=None):
         try:
             return self._resources[res_id]
         except KeyError:
-            url = RSS_Resource_id2url(res_id)
-            resource = RSS_Resource(url)
-            self._resources[resource.url()] = resource
-            self._resources[resource.id()] = resource
-            RSS_Resource.schedule_update(resource)
-            return resource
+            resource_url = RSS_Resource_id2url(res_id)
+            return self.get_resource(resource_url, res_cursor)
+
 
     def evict_resource(self, resource):
         try:
@@ -669,8 +666,12 @@ class JabberUser:
         cursor.execute('DELETE FROM user_resource WHERE uid=? AND rid=?',
                        (self._uid, res_id))
 
-    def headline_id(self, resource):
-        cursor = db.cursor()
+    def headline_id(self, resource, db_cursor=None):
+        if db_cursor == None:
+            cursor = db.cursor()
+        else:
+            cursor = db_cursor
+
         cursor.execute('SELECT seq_nr FROM user_resource WHERE uid=? AND rid=?',
                        (self._uid, resource.id()))
 
@@ -1568,18 +1569,20 @@ class JabberSessionEventHandler:
             db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
             resource.lock(); need_unlock = True
             try:
-                print 'TODO: process', resource.url()
+                print 'processing updated resource', resource.url()
                 uids = storage.get_resource_uids(resource, cursor)
                 for uid in uids:
                     try:
                         user = storage.get_user_by_id(uid)
 
                         if user.get_delivery_state():
-                            user.update_headline(resource,
-                                                 next_item_id,
-                                                 new_items, cursor)
+                            headline_id = user.headline_id(resource, cursor)
+                            if headline_id < next_item_id:
+                                user.update_headline(resource,
+                                                     next_item_id,
+                                                     new_items, cursor)
 
-                        deliver_users.append(user)
+                                deliver_users.append(user)
                     except KeyError:
                         # just means that the user is no longer online
                         pass
