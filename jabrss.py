@@ -535,7 +535,7 @@ class JabberUser:
     def _update_configuration(self):
         cursor = db.cursor()
         cursor.execute('UPDATE user SET conf=?, store_messages=?, size_limit=? WHERE uid=?',
-                       (self._configuration, self._store_messages, self._size_limit / 16))
+                       (self._configuration, self._store_messages, self._size_limit / 16, self._uid))
 
     def set_configuration(self, conf, store_messages, size_limit):
         self._configuration = conf
