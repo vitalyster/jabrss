@@ -614,7 +614,11 @@ class Feed_Parser(xmllib.XMLParser):
             'http://purl.org/rss/2.0/ rss' :
             (self.rss_rss_start, self.rss_rss_end),
             'http://purl.org/atom/ns# feed' :
-            (self.atom_feed_start, self.atom_feed_end)
+            (self.atom_feed_start, self.atom_feed_end),
+
+            # RSS 1.1, see http://inamidst.com/rss1.1/
+            'http://purl.org/net/rss1.1# Channel' :
+            (self.rss_rss11_start, self.rss_rss11_end)
             }
 
         self._charset = charset
@@ -809,6 +813,28 @@ class Feed_Parser(xmllib.XMLParser):
             })
 
     def rss_rss_end(self):
+        self.elements = {}
+
+
+    def rss_rss11_start(self, attrs):
+        self._format = 'rss11'
+        self.elements.update({
+            'http://purl.org/net/rss1.1# item' :
+            (self.rss_item_start, self.rss_item_end),
+
+            'http://purl.org/net/rss1.1# title' :
+            (self.rss_title_start, self.rss_title_end),
+
+            'http://purl.org/net/rss1.1# link' :
+            (self.rss_link_start, self.rss_link_end),
+
+            'http://purl.org/net/rss1.1# description' :
+            (self.rss_description_start, self.rss_description_end)
+            })
+        self._state = self._state | 0x04
+
+    def rss_rss11_end(self):
+        self._state = self._state & ~0x04
         self.elements = {}
 
 
