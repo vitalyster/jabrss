@@ -16,8 +16,8 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
 # USA
 
-import gdbm, httplib, rfc822, os, random, re, socket, string, struct, sys
-import time, threading, traceback, zlib
+import codecs, gdbm, httplib, rfc822, os, random, re, socket, string, struct
+import sys, time, threading, traceback, zlib
 import xmllib
 
 # try to use timeoutsocket if it is available
@@ -404,10 +404,21 @@ class RSS_Parser(xmllib.XMLParser):
 
     def feed(self, data):
         if self._bytes == 0:
-            if data[:2] == '\xff\xfe':
+            if data[:4] == codecs.BOM64_LE:
+                # probably not supported
+                self._feed_encoding = 'utf-32-le'
+                data = data[4:]
+            elif data[:4] == codecs.BOM64_BE:
+                # probably not supported
+                self._feed_encoding = 'utf-32-be'
+                data = data[4:]
+            elif data[:3] == '\xef\xbb\xbf':
+                self._feed_encoding = 'utf-8'
+                data = data[3:]
+            elif data[:2] == codecs.BOM32_LE:
                 self._feed_encoding = 'utf-16-le'
                 data = data[2:]
-            elif data[:2] == '\xfe\xff':
+            elif data[:2] == codecs.BOM32_BE:
                 self._feed_encoding = 'utf-16-be'
                 data = data[2:]
 
@@ -568,7 +579,7 @@ class RSS_Resource:
             self._invalid_since = 0
 
         try:
-            self._channel_info = tuple(string.split(RSS_Resource._db['I' + self._id_str].decode('utf8'), '\0'))
+            self._channel_info = tuple(string.split(RSS_Resource._db['I' + self._id_str].decode('utf-8'), '\0'))
         except KeyError:
             self._channel_info = ('', '', '')
 
@@ -603,7 +614,7 @@ class RSS_Resource:
         if self._invalid_since:
             RSS_Resource._db_sync.acquire()
             try:
-                error_info = RSS_Resource._db['E' + self._id_str].decode('utf8')
+                error_info = RSS_Resource._db['E' + self._id_str].decode('utf-8')
             except KeyError:
                 pass
             RSS_Resource._db_sync.release()
@@ -692,10 +703,10 @@ class RSS_Resource:
                     RSS_Resource._db_sync.acquire()
                     if self._channel_info != new_channel_info:
                         self._channel_info = new_channel_info
-                        RSS_Resource._db['I' + self._id_str] = string.join(self._channel_info, '\0').encode('utf8')
+                        RSS_Resource._db['I' + self._id_str] = string.join(self._channel_info, '\0').encode('utf-8')
 
                     try:
-                        items = map(lambda x: tuple(string.split(x, '\0')), string.split(RSS_Resource._db['D' + self._id_str].decode('utf8'), '\014'))
+                        items = map(lambda x: tuple(string.split(x, '\0')), string.split(RSS_Resource._db['D' + self._id_str].decode('utf-8'), '\014'))
                     except KeyError:
                         items = []
                     RSS_Resource._db_sync.release()
@@ -736,7 +747,7 @@ class RSS_Resource:
                         self._history = self._history[-16:]
 
                         RSS_Resource._db_sync.acquire()
-                        RSS_Resource._db['D' + self._id_str] = string.join(map(lambda x: string.join(x, '\0'), items), '\014').encode('utf8')
+                        RSS_Resource._db['D' + self._id_str] = string.join(map(lambda x: string.join(x, '\0'), items), '\014').encode('utf-8')
                         RSS_Resource._db['H' + self._id_str] = struct.pack('>l', self._first_item_id) + string.join(map(lambda x: struct.pack('>ll', x[0], x[1]), self._history), '')
 
                         if RSS_Resource._db_updates > 64:
@@ -761,6 +772,8 @@ class RSS_Resource:
                     error_info = 'HTTP: %d %s' % (errcode, errmsg)
         except UnicodeError, e:
             error_info = 'encoding: ' + str(e)
+        except LookupError, e:
+            error_info = 'encoding: ' + str(e)
         except ValueError, e:
             error_info = 'HTTP compression: ' + str(e)
         except xmllib.Error, e:
@@ -781,7 +794,7 @@ class RSS_Resource:
 
         RSS_Resource._db_sync.acquire()
         if error_info:
-            RSS_Resource._db['E' + self._id_str] = error_info.encode('utf8')
+            RSS_Resource._db['E' + self._id_str] = error_info.encode('utf-8')
         else:
             try:
                 del RSS_Resource._db['E' + self._id_str]
@@ -798,7 +811,7 @@ class RSS_Resource:
     def get_headlines(self, first_id):
         RSS_Resource._db_sync.acquire()
         try:
-            items = map(lambda x: tuple(string.split(x, '\0')), string.split(RSS_Resource._db['D' + self._id_str].decode('utf8'), '\014'))
+            items = map(lambda x: tuple(string.split(x, '\0')), string.split(RSS_Resource._db['D' + self._id_str].decode('utf-8'), '\014'))
         except KeyError:
             items = []
         RSS_Resource._db_sync.release()

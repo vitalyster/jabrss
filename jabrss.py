@@ -293,7 +293,7 @@ class DataStorage:
     def remove_user(self, user):
         JabberUser._db_sync.acquire()
         try:
-            del JabberUser._db['U' + user._jid.encode('utf8')]
+            del JabberUser._db['U' + user._jid.encode('utf-8')]
         except KeyError:
             pass
         try:
@@ -363,7 +363,7 @@ class JabberUser:
         self._size_limit = 0
         JabberUser._db_sync.acquire()
         try:
-            uid_conf = JabberUser._db['U' + jid.encode('utf8')]
+            uid_conf = JabberUser._db['U' + jid.encode('utf-8')]
 
             self._uid_str = uid_conf[0:4]
             self._uid = struct.unpack('>l', self._uid_str)[0]
@@ -379,8 +379,8 @@ class JabberUser:
             JabberUser._db['S'] = struct.pack('>l', JabberUser._seq_nr)
             self._uid = JabberUser._seq_nr
             self._uid_str = struct.pack('>l', self._uid)
-            JabberUser._db['U' + self._jid.encode('utf8')] = self._uid_str + struct.pack('>l', self._configuration)
-            JabberUser._db['S' + self._uid_str] = self._jid.encode('utf8')
+            JabberUser._db['U' + self._jid.encode('utf-8')] = self._uid_str + struct.pack('>l', self._configuration)
+            JabberUser._db['S' + self._uid_str] = self._jid.encode('utf-8')
 
         self._res_ids = []
         try:
@@ -501,7 +501,7 @@ class JabberUser:
 
     def _update_configuration(self):
         JabberUser._db_sync.acquire()
-        JabberUser._db['U' + self._jid.encode('utf8')] = self._uid_str + struct.pack('>lBB', self._configuration, self._store_messages, self._size_limit / 16)
+        JabberUser._db['U' + self._jid.encode('utf-8')] = self._uid_str + struct.pack('>lBB', self._configuration, self._store_messages, self._size_limit / 16)
         JabberUser._db_sync.release()
 
     def _update_presence(self):
@@ -967,7 +967,7 @@ class JabberSessionEventHandler:
                     subscription = item.getAttrib('subscription')
                     if subscription == 'both':
                         try:
-                            del JabberUser._db['D' + jid.lower().encode('utf8')]
+                            del JabberUser._db['D' + jid.lower().encode('utf-8')]
                             print 'unsubscribing inactive user "%s"' % (jid.encode('iso8859-1', 'replace'),)
                             self._remove_user(jid)
                         except KeyError:
@@ -980,7 +980,7 @@ class JabberSessionEventHandler:
                 JabberUser._db_sync.release()
 
                 for u_key in u_keys:
-                    username = u_key[1:].decode('utf8')
+                    username = u_key[1:].decode('utf-8')
                     if not subscribers.has_key(username):
                         print 'user "%s" in database, but not subscribed to the service' % (username.encode('iso8859-1', 'replace'),)
                         self._delete_user(username)
