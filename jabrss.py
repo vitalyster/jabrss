@@ -347,7 +347,7 @@ class JabberUser:
     # self._uid_str
     # self._res_ids
     # self._configuration & 0x0003 .. message type
-    #   (0 = plain text, 1 = headline messages, 2/3 = reserved)
+    #   (0 = plain text, 1 = headline messages, 2 = chat message, 3 = reserved)
     # self._configuration & 0x001c .. deliver when away
     #   (4 = away, 8 = xa, 16 = dnd)
     # self._store_messages .. number of messages that should be stored
@@ -673,19 +673,23 @@ class JabberSessionEventHandler:
             elif arg == 'headline':
                 user.set_message_type(1)
                 reply_body = 'Message type set to "headline"'
+            elif arg == 'chat':
+                user.set_message_type(2)
+                reply_body = 'Message type set to "chat"'
             else:
                 args = string.split(arg)
                 if args[0] == 'also_deliver':
                     deliver_cfg = 0
 
                     for s in args[1:]:
-                        if s == 'Away':
+                        s = string.lower(s)
+                        if s == 'away':
                             deliver_cfg = deliver_cfg | 1
-                        elif s == 'XA':
+                        elif s == 'xa':
                             deliver_cfg = deliver_cfg | 2
-                        elif s == 'DND':
+                        elif s == 'dnd':
                             deliver_cfg = deliver_cfg | 4
-                        elif s == 'None':
+                        elif s == 'none':
                             pass
                         else:
                             raise 'unknown setting for "also_deliver"'
@@ -717,6 +721,10 @@ class JabberSessionEventHandler:
             reply_body.append('message type "plaintext"')
         elif message_type == 1:
             reply_body.append('message type "headline"')
+        elif message_type == 2:
+            reply_body.append('message type "chat"')
+        else:
+            reply_body.append('message type <reserved>')
 
         deliver_when_away = user.get_deliver_when_away()
         deliver_when_xa = user.get_deliver_when_xa()
@@ -1109,7 +1117,7 @@ class JabberSessionEventHandler:
         print 'sending', user.jid().encode('iso8859-1', 'replace'), resource.url()
         message_type = user.get_message_type()
 
-        if message_type == 0:
+        if message_type == 0 or message_type == 2:
             body = ''
 
             if not not_stored and (len(items) > user.get_store_messages()):
@@ -1123,7 +1131,11 @@ class JabberSessionEventHandler:
                     body = body + ('%s\n%s\n%s\n\n' % (title, link,
                                                        descr[:user.get_size_limit()]))
 
-            message = jab_session.createMessage(user.jid(), body, jabIConstMessage.mtNormal)
+            if message_type == 0:
+                mt = jabIConstMessage.mtNormal
+            else:
+                mt = jabIConstMessage.mtChat
+            message = jab_session.createMessage(user.jid(), body, mt)
             message.setSubject(resource.channel_info()[0])
             jab_session.sendPacket(message)
         elif message_type == 1:
