@@ -23,7 +23,7 @@ import xmllib
 # try to use timeoutsocket if it is available
 try:
     import timeoutsocket
-    timeoutsocket.setDefaultSocketTimeout(360)
+    timeoutsocket.setDefaultSocketTimeout(60)
 except ImportError:
     pass
 
