@@ -30,19 +30,22 @@ TEXT_HELP = 'Please refer to the JabRSS Web site (http://JabXPCOM.sunsite.dk/jab
 
 
 JABBER_SERVER = None
+JABBER_HOST = None
 JABBER_USER = None
 JABBER_PASSWORD = None
 
 
-opts, args = getopt.getopt(sys.argv[1:], 'f:p:s:u:',
+opts, args = getopt.getopt(sys.argv[1:], 'f:h:p:s:u:',
                            ['password-file=', 'password=',
-                            'server=', 'username='])
+                            'server=', 'connect-host=', 'username='])
 
 for optname, optval in opts:
     if optname == '-f' or optname == '--password-file':
         fd = open(optval, 'r')
         JABBER_PASSWORD = string.strip(fd.readline())
         fd.close()
+    elif optname == '-c' or optname == '--connect-host':
+        JABBER_HOST = optval
     elif optname == '-p' or optname == '--password':
         JABBER_PASSWORD = optval
     elif optname == '-s' or optname == '--server':
@@ -56,6 +59,12 @@ if JABBER_USER == None:
     JABBER_USER = raw_input('Username: ')
 if JABBER_PASSWORD == None:
     JABBER_PASSWORD = raw_input('Password: ')
+
+if JABBER_HOST == None:
+    JABBER_HOST = JABBER_SERVER
+
+if JABBER_HOST.find(':') == -1:
+    JABBER_HOST += ':5222'
 
 
 http_proxy = os.getenv('http_proxy')
@@ -544,7 +553,7 @@ class JabberUser:
         if self._size_limit > 0:
             return min(self._size_limit, 4096)
         else:
-            return 4096
+            return 1024
 
 
     def set_store_messages(self, store_messages):
@@ -1440,10 +1449,10 @@ def wait_and_reconnect(jab_session, event_queue, timespan):
                 rc = tcp_stream.connect_output(https_proxy, None)
 
             if not rc:
-                rc = proxy_stream.connect_output(JABBER_SERVER + ':5222', None)
+                rc = proxy_stream.connect_output(JABBER_HOST, None)
         else:
             tcp_stream.connect_client(jab_session_input)
-            rc = tcp_stream.connect_output(JABBER_SERVER + ':5222', None)
+            rc = tcp_stream.connect_output(JABBER_HOST, None)
 
         if not rc:
             jab_session.outputStream = tcp_stream
