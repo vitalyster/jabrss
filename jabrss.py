@@ -808,13 +808,13 @@ class JabberSessionEventHandler:
                                          new_items)
                     user.update_headline(resource, headline_id, new_items)
 
-                print user.jid(), 'subscribed to', url
+                print user.jid().encode('iso8859-1', 'replace'), 'subscribed to', url
                 reply = message.reply('You have been subscribed to %s' % (url,))
             except ValueError:
-                print user.jid(), 'already subscribed to', url
+                print user.jid().encode('iso8859-1', 'replace'), 'already subscribed to', url
                 reply = message.reply('You are already subscribed to %s' % (url,))
             except:
-                print user.jid(), 'error subscribing to', url
+                print user.jid().encode('iso8859-1', 'replace'), 'error subscribing to', url
                 traceback.print_exc(file=sys.stdout)
                 reply = message.reply('For some reason you couldn\'t be subscribed to %s' % (url,))
 
@@ -831,7 +831,7 @@ class JabberSessionEventHandler:
                 user.remove_resource(resource)
                 storage.remove_resource_user(resource, user)
 
-                print user.jid(), 'unsubscribed from', url
+                print user.jid().encode('iso8859-1', 'replace'), 'unsubscribed from', url
                 reply = message.reply('You have been unsubscribed from %s' % (url,))
             except KeyError:
                 reply = message.reply('For some reason you couldn\'t be unsubscribed from %s' % (url,))
@@ -955,7 +955,7 @@ class JabberSessionEventHandler:
             query = tag.findElement('query')
             if query:
                 xmlns = query.getAttrib('xmlns')
-                print 'iq', xmlns
+                print 'iq', xmlns.encode('iso8859-1', 'replace')
             else:
                 xmlns = None
 
@@ -1030,11 +1030,11 @@ class JabberSessionEventHandler:
             elif body == 'debug resources':
                 resources = storage._resources.keys()
                 resources.sort()
-                print resources
+                print repr(resources)
             elif body == 'debug users':
                 users = storage._users.keys()
                 users.sort()
-                print users
+                print repr(users)
             else:
                 reply = message.reply('Unknown command. Please refer to the documentation at http://JabXPCOM.sunsite.dk/jabrss/')
                 self._jab_session.sendPacket(reply)
@@ -1078,7 +1078,7 @@ class JabberSessionEventHandler:
                 user, jid_resource = storage.get_user(presence.sender)
                 user.set_presence(jid_resource, presence.show)
                 if user.presence() == jabIPresence.stOffline:
-                    print 'evicting user', user.jid()
+                    print 'evicting user', user.jid().encode('iso8859-1', 'replace')
                     storage.evict_user(user)
             except KeyError:
                 pass
@@ -1102,7 +1102,7 @@ class JabberSessionEventHandler:
 
 
     def _send_headlines(self, jab_session, user, resource, items, not_stored=0):
-        print 'sending', user.jid(), resource.url()
+        print 'sending', user.jid().encode('iso8859-1', 'replace'), resource.url()
         message_type = user.get_message_type()
 
         if message_type == 0:
@@ -1185,6 +1185,8 @@ class JabberSessionEventHandler:
                     timeout = self._update_queue[0][0] - int(time.time())
 
                     if timeout > 3:
+                        if timeout > 300:
+                            print 'updater waiting for %d seconds' % (timeout,)
                         self._update_queue_cond.wait(timeout)
                     else:
                         resource = self._update_queue[0][1]
@@ -1194,6 +1196,7 @@ class JabberSessionEventHandler:
                         self._update_resource(resource, jab_session_proxy)
                         self._update_queue_cond.acquire()
                 else:
+                    print 'updater queue empty...'
                     self._update_queue_cond.wait()
 
             self._update_queue_cond.release()
