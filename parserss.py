@@ -202,21 +202,95 @@ class Null_Decompressor:
 
 class Deflate_Decompressor:
     def __init__(self):
+        self._adler32 = zlib.adler32('')
+        self._raw_deflate = False
+
         self._decompress = zlib.decompressobj()
+        self._buffer = ''
+
+        self._state_feed = Deflate_Decompressor._feed_header
+
+    def _update_adler32(self, data):
+        self._adler32 = zlib.adler32(data, self._adler32)
+
 
     def feed(self, s):
-        print repr(s)
-        return self._decompress.decompress(s)
+        self._buffer = self._buffer + s
+        data = ''
+
+        while self._state_feed and len(self._buffer):
+            res = self._state_feed(self)
+
+            if res:
+                self._update_adler32(res)
+                data += res
+
+            if res != None:
+                break
+
+        return data
 
     def flush(self):
-        return self._decompress.flush()
+        data = ''
+
+        while self._state_feed:
+            res = self._state_feed(self)
+
+            if res:
+                self._update_adler32(res)
+                data += res
+            elif res == '' and self._state_feed != None:
+                raise IOError, 'premature EOF'
+
+        if len(self._buffer):
+            raise IOError, 'extra data at end of compressed data'
+
+        return data
+
+
+    def _feed_header(self):
+        if len(self._buffer) >= 2:
+            header = self._buffer[:2]
+            header_int = struct.unpack('>H', header)[0]
+            if header_int % 31 != 0:
+                self._raw_deflate = True
+                self._buffer = '\x78\x9c' + self._buffer
+
+            self._state_feed = Deflate_Decompressor._feed_data
+            return None
+
+        # need more data
+        return ''
+
+    def _feed_data(self):
+        if len(self._buffer) > 0:
+            data = self._decompress.decompress(self._buffer)
+            self._buffer = self._decompress.unused_data
+        else:
+            data = self._decompress.flush()
+            self._buffer = self._decompress.unused_data
+            self._state_feed = Deflate_Decompressor._feed_eof
+
+            if not data:
+                return None
+
+        if self._buffer:
+            self._state_feed = Deflate_Decompressor._feed_eof
+            if not data:
+                return None
+
+        return data
+
+    def _feed_eof(self):
+        self._state_feed = None
+        return ''
 
 
 class Gzip_Decompressor:
     FTEXT, FHCRC, FEXTRA, FNAME, FCOMMENT = 1, 2, 4, 8, 16
 
     def __init__(self):
-        self._crc = zlib.crc32("")
+        self._crc = zlib.crc32('')
         self._size = 0
 
         self._decompress = zlib.decompressobj(-zlib.MAX_WBITS)
@@ -225,32 +299,40 @@ class Gzip_Decompressor:
 
         self._state_feed = Gzip_Decompressor._feed_header_static
 
-    def _update_crc(self, data):
+    def _update_crc32(self, data):
         self._crc = zlib.crc32(data, self._crc)
         self._size = self._size + len(data)
 
     def feed(self, s):
         self._buffer = self._buffer + s
+        data = ''
 
-        res = None
-        while res == None:
+        while self._state_feed and len(self._buffer):
             res = self._state_feed(self)
 
             if res:
-                self._update_crc(res)
+                self._update_crc32(res)
+                data += res
 
-        return res
+            if res != None:
+                break
+
+        return data
 
     def flush(self):
         data = ''
+
         while self._state_feed:
             res = self._state_feed(self)
 
             if res:
-                self._update_crc(res)
+                self._update_crc32(res)
                 data += res
             elif res == '' and self._state_feed != None:
                 raise IOError, 'premature EOF'
+
+        if len(self._buffer):
+            raise IOError, 'extra data at end of compressed data'
 
         return data
 
@@ -312,17 +394,21 @@ class Gzip_Decompressor:
     def _feed_data(self):
         if len(self._buffer) > 0:
             data = self._decompress.decompress(self._buffer)
-            if self._decompress.unused_data:
-                self._buffer = self._decompress.unused_data
-                self._state_feed = Gzip_Decompressor._feed_eof
-                if not data:
-                    return None
-            else:
-                self._buffer = ''
-            return data
+            self._buffer = self._decompress.unused_data
+        else:
+            data = self._decompress.flush()
+            self._buffer = self._decompress.unused_data
+            self._state_feed = Gzip_Decompressor._feed_eof
 
-        # need more data
-        return ''
+            if not data:
+                return None
+
+        if self._buffer:
+            self._state_feed = Gzip_Decompressor._feed_eof
+            if not data:
+                return None
+
+        return data
 
     def _feed_eof(self):
         if len(self._buffer) >= 8:
@@ -332,6 +418,7 @@ class Gzip_Decompressor:
             elif isize != self._size:
                 raise DecompressorError('Incorrect length of data produced')
 
+            self._buffer = self._buffer[8:]
             self._state_feed = None
         return ''
 
@@ -1026,6 +1113,7 @@ class RSS_Resource:
         cursor = db.cursor()
         db_txn_end = None
 
+        redirect_penalty = 0
         redirect_tries = redirect_count
         redirect_permanent = True
         redirect_resource = None
@@ -1041,9 +1129,9 @@ class RSS_Resource:
                 if redirect_permanent:
                     redirect_url = url_protocol + '://' + url_host + url_path
                     if redirect_url != self._url:
-                        print 'redirect: %s -> %s' % (self._url.encode('iso8859-1', 'replace'), redirect_url.encode('iso8859-1', 'replace'))
+                        #print 'redirect: %s -> %s' % (self._url.encode('iso8859-1', 'replace'), redirect_url.encode('iso8859-1', 'replace'))
                         if RSS_Resource._redirect_cb:
-                            redirect_resource, redirects = RSS_Resource._redirect_cb(redirect_url, cursor, -redirect_tries)
+                            redirect_resource, redirects = RSS_Resource._redirect_cb(redirect_url, cursor, -redirect_tries + 1)
 
                             # only perform the redirect if target is valid
                             if redirect_resource._invalid_since:
@@ -1092,7 +1180,7 @@ class RSS_Resource:
                     h.putheader('Host', url_host)
                 h.putheader('Pragma', 'no-cache')
                 h.putheader('Cache-Control', 'no-cache')
-                h.putheader('Accept-Encoding', 'deflate, gzip')
+                h.putheader('Accept-Encoding', 'gzip, deflate')
                 h.putheader('User-Agent', 'jabrss (http://JabXPCOM.sunsite.dk/jabrss/)')
                 if self._last_modified:
                     h.putheader('If-Modified-Since',
@@ -1190,6 +1278,7 @@ class RSS_Resource:
                 elif (errcode >= 300) and (errcode < 400):
                     if errcode != 301:
                         redirect_permanent = False
+                        redirect_penalty += 1
 
                     redirect_url = headers.get('location', None)
                     if redirect_url:
@@ -1258,6 +1347,11 @@ class RSS_Resource:
             else:
                 # "not modified" response from server, good
                 self._penalty = (3 * self._penalty) / 4
+
+        if redirect_penalty > 0:
+            # penalty for temporary redirects
+            self._penalty = (7 * self._penalty) / 8 + 128
+
 
         cursor.execute('UPDATE resource SET last_modified=?, last_updated=?, etag=?, invalid_since=?, penalty=? WHERE rid=?',
                        (self._last_modified, self._last_updated, self._etag,
