@@ -307,14 +307,7 @@ class DataStorage:
             pass
         JabberUser._db_sync.release()
 
-        try:
-            del self._users[user._uid]
-        except KeyError:
-            pass
-        try:
-            del self._users[user._jid]
-        except KeyError:
-            pass
+        self.evict_user(user)
 
 
 
@@ -889,6 +882,31 @@ class JabberSessionEventHandler:
 
             self._jab_session.sendPacket(reply)
 
+    def _remove_user(self, jid):
+        iq = self._jab_session.createInfoQuery('', jabIInfoQuery.iqtSet)
+        query = iq.addQuery('roster')
+        item = query.addElement('item')
+        item.putAttrib('jid', jid)
+        item.putAttrib('subscription', 'remove')
+
+        print 'sending remove request', jid.encode('iso8859-1', 'replace')
+        self._jab_session.sendPacket(iq)
+
+    # delete all user information from database and evict user
+    def _delete_user(self, jid):
+        try:
+            user, jid_resource = storage.get_new_user(jid,
+                                                      jabIPresence.stOffline)
+
+            for res_id in user.resources():
+                resource = storage.get_resource_by_id(res_id)
+                user.remove_resource(resource)
+                storage.remove_resource_user(resource, user)
+
+            storage.remove_user(user)
+        except KeyError:
+            traceback.print_exc(file=sys.stdout)
+
 
     def onConnected(self, tag):
         print 'connected, id:', tag.getAttrib('id').encode('iso8859-1', 'replace'), tag.toXML().encode('iso8859-1', 'replace')
@@ -937,23 +955,18 @@ class JabberSessionEventHandler:
                     if item.getAttrib('subscription') == 'both':
                         subscribers[jid.lower()] = None
                     else:
-                        iq = self._jab_session.createInfoQuery('', jabIInfoQuery.iqtSet)
-                        query = iq.addQuery('roster')
-                        item = query.addElement('item')
-                        item.putAttrib('jid', jid)
-                        item.putAttrib('subscription', 'remove')
-
-                        print 'sending remove request', jid.encode('iso8859-1', 'replace')
-                        self._jab_session.sendPacket(iq)
+                        self._remove_user(jid)
 
                 JabberUser._db_sync.acquire()
                 u_keys = filter(lambda x: x[0] == 'U' and len(x) > 1, JabberUser._db.keys())
+                JabberUser._db_sync.release()
+
                 for u_key in u_keys:
                     username = u_key[1:].decode('utf8')
                     if not subscribers.has_key(username):
                         print 'user "%s" in database, but not subscribed to the service' % (username.encode('iso8859-1', 'replace'),)
+                        self._delete_user(username)
 
-                JabberUser._db_sync.release()
             elif xmlns == 'jabber:iq:agents':
                 # ignore agents
                 pass
@@ -1023,26 +1036,8 @@ class JabberSessionEventHandler:
         print 'presence', presence.sender.encode('iso8859-1', 'replace'), presence.type, presence.show
 
         if (presence.type == jabIPresence.ptUnsubscribed):
-            try:
-                user, jid_resource = storage.get_user(presence.sender)
-
-                for res_id in user.resources():
-                    resource = storage.get_resource_by_id(res_id)
-                    user.remove_resource(resource)
-                    storage.remove_resource_user(resource, user)
-
-                storage.remove_user(user)
-            except KeyError:
-                traceback.print_exc(file=sys.stdout)
-
-            iq = self._jab_session.createInfoQuery('', jabIInfoQuery.iqtSet)
-            query = iq.addQuery('roster')
-            item = query.addElement('item')
-            item.putAttrib('jid', presence.sender)
-            item.putAttrib('subscription', 'remove')
-
-            print 'sending remove request', presence.sender.encode('iso8859-1', 'replace')
-            self._jab_session.sendPacket(iq)
+            self._delete_user(presence.sender)
+            self._remove_user(presence.sender)
 
         elif (presence.type == jabIPresence.ptAvailable):
             user, jid_resource = storage.get_new_user(presence.sender,
@@ -1075,6 +1070,7 @@ class JabberSessionEventHandler:
         if presence.type == jabIPresence.ptSubRequest:
             presence_reply = presence.reply(jabIPresence.ptSubscribed)
         elif presence.type == jabIPresence.ptUnsubRequest:
+            self._remove_user(presence.sender)
             presence_reply = presence.reply(jabIPresence.ptUnsubscribed)
         self._jab_session.sendPacket(presence_reply)
 
@@ -1161,6 +1157,7 @@ class JabberSessionEventHandler:
     def run(self, jab_session_proxy):
         try:
             time.sleep(20)
+            print 'starting RSS/RDF updater'
 
             self._update_queue_cond.acquire()
             while 1:
