@@ -817,7 +817,7 @@ class RSS_Resource:
     NR_ITEMS = 48
 
     _db = gdbm.open('jabrss_urls.db', 'c')
-    #_db.reorganize()
+    _db.reorganize()
     _db_updates = 0
     _db_sync = threading.Lock()
 
@@ -1086,9 +1086,9 @@ class RSS_Resource:
                         RSS_Resource._db['D' + self._id_str] = string.join(map(lambda x: string.join(x, '\0'), items), '\014').encode('utf-8')
                         RSS_Resource._db['H' + self._id_str] = struct.pack('>l', self._first_item_id) + string.join(map(lambda x: struct.pack('>ll', x[0], x[1]), self._history), '')
 
-                        if RSS_Resource._db_updates > 64:
+                        if RSS_Resource._db_updates > 256:
                             RSS_Resource._db_updates = 0
-                            #RSS_Resource._db.reorganize()
+                            RSS_Resource._db.reorganize()
                         else:
                             RSS_Resource._db_updates = RSS_Resource._db_updates + 1
                         RSS_Resource._db_sync.release()
