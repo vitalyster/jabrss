@@ -178,10 +178,11 @@ class Cursor:
         db_sync.acquire()
 
     def __del__(self):
-        if self._txn:
-            self._cursor.execute('END')
-
-        db_sync.release()
+        try:
+            if self._txn:
+                self._cursor.execute('END')
+        finally:
+            db_sync.release()
 
 
     def begin(self):
@@ -542,7 +543,7 @@ class JabberUser:
             cursor = db_cursor
 
         cursor.execute('INSERT INTO user_stat (uid, start, nr_msgs0, nr_msgs1, nr_msgs2, nr_msgs3, nr_msgs4, nr_msgs5, nr_msgs6, nr_msgs7, size_msgs0, size_msgs1, size_msgs2, size_msgs3, size_msgs4, size_msgs5, size_msgs6, size_msgs7) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                          tuple([self._uid, self._stat_start] + self._nr_headlines + self._size_headlines))
+                       tuple([self._uid, self._stat_start] + self._nr_headlines + self._size_headlines))
 
         del cursor
 
@@ -1649,13 +1650,14 @@ class JabberSessionEventHandler:
         if redirect_url != None:
             return
 
-        cursor = Cursor(db)
+        cursor = None
         users_unlocker = None
         redirect_resource = None
         redirects = []
 
         resource.lock(); need_unlock = True
         try:
+            cursor = Cursor(db)
             uids = storage.get_resource_uids(resource, cursor)
             cursor = None
 
