@@ -17,9 +17,14 @@
 # USA
 
 import codecs, httplib, md5, rfc822, os, random, re, socket, string, struct
-import sys, time, threading, traceback, types, zlib
+import sys, time, threading, traceback, types, xmllib, zlib
 import apsw
-import xmllib
+
+try:
+    from cStringIO import StringIO
+except ImportError:
+    from StringIO import StringIO
+import mimetools
 
 
 SOCKET_CONNECTTIMEOUT = 200
@@ -187,6 +192,19 @@ class Data:
     def __init__(self, **kw):
         for key, value in kw.items():
             setattr(self, key, value)
+
+
+class HTTPConnection(httplib.HTTPConnection):
+##    def __init__(self, host, port=None):
+##        self._http_vsn = 10
+##        self._http_vsn_str = 'HTTP/1.0'
+
+##        httplib.HTTPConnection.__init__(self, host, port)
+
+    def putrequest(self, method, url):
+        self._http_vsn = 10
+        httplib.HTTPConnection.putrequest(self, method, url, True)
+        self._http_vsn = 11
 
 
 class DecompressorError(ValueError):
@@ -1120,6 +1138,9 @@ class RSS_Resource:
         redirect_seq = None
         redirects = []
 
+        http_conn = None
+        http_host = None
+
         try:
             url_protocol, url_host, url_path = self._url_protocol, self._url_host, self._url_path
 
@@ -1167,28 +1188,54 @@ class RSS_Resource:
                     host = url_host
                     request = url_path
 
-                h = httplib.HTTP(host)
-                h.putrequest('GET', request)
+                if http_host == host and http_conn != None:
+                    conn_reused = True
+                    h = http_conn
+                else:
+                    conn_reused = False
+                    h = HTTPConnection(host)
+
+                http_host = host
+                http_conn = None
+                try:
+                    h.putrequest('GET', request)
+
+                    if conn_reused:
+                        print 'reused HTTP connection'
+                except httplib.CannotSendRequest:
+                    print 'caught CannotSendRequest, opening new connection'
+
+                    if not conn_reused:
+                        raise
+
+                    h = HTTPConnection(host)
+                    h.putrequest('GET', request)
+
                 # adjust the socket timeout after the connection has been
                 # established
-                if hasattr(h._conn.sock, 'settimeout'):
-                    h._conn.sock.settimeout(SOCKET_TIMEOUT)
-                elif hasattr(h._conn.sock, 'set_timeout'):
-                    h._conn.sock.set_timeout(SOCKET_TIMEOUT)
+                if hasattr(h.sock, 'settimeout'):
+                    h.sock.settimeout(SOCKET_TIMEOUT)
+                elif hasattr(h.sock, 'set_timeout'):
+                    h.sock.set_timeout(SOCKET_TIMEOUT)
 
                 if not RSS_Resource.http_proxy:
                     h.putheader('Host', url_host)
+                h.putheader('Connection', 'Keep-Alive')
                 h.putheader('Pragma', 'no-cache')
                 h.putheader('Cache-Control', 'no-cache')
-                h.putheader('Accept-Encoding', 'gzip, deflate')
-                h.putheader('User-Agent', 'jabrss (http://JabXPCOM.sunsite.dk/jabrss/)')
+                h.putheader('Accept-Encoding', 'gzip, deflate, identity')
+                h.putheader('User-Agent', 'JabRSS (http://jabrss.cmeerw.org)')
                 if self._last_modified:
                     h.putheader('If-Modified-Since',
                                 rfc822.formatdate(self._last_modified))
                 if self._etag != None:
                     h.putheader('If-None-Match', self._etag)
                 h.endheaders()
-                errcode, errmsg, headers = h.getreply()
+                response = h.getresponse()
+
+                errcode = response.status
+                errmsg = response.reason
+                headers = response.msg
 
                 # check the error code
                 if (errcode >= 200) and (errcode < 300):
@@ -1218,13 +1265,12 @@ class RSS_Resource:
 
                     rss_parser = Feed_Parser()
 
-                    f = h.getfile()
                     bytes_received = 0
                     bytes_processed = 0
                     xml_started = 0
                     file_hash = md5.new()
 
-                    l = f.read(4096)
+                    l = response.read(4096)
                     while l:
                         bytes_received = bytes_received + len(l)
                         if bytes_received > 48 * 1024:
@@ -1244,8 +1290,10 @@ class RSS_Resource:
 
                         rss_parser.feed(data)
 
-                        l = f.read(4096)
+                        l = response.read(4096)
 
+                    response.close()
+                    h.close()
                     data = decoder.flush()
                     file_hash.update(data)
                     rss_parser.feed(data)
@@ -1276,6 +1324,20 @@ class RSS_Resource:
                 # handle "301 Moved Permanently", "302 Found" and
                 # "307 Temporary Redirect"
                 elif (errcode >= 300) and (errcode < 400):
+                    bytes_received = 0
+                    l = response.read(4096)
+                    while l:
+                        bytes_received = bytes_received + len(l)
+                        if bytes_received > 48 * 1024:
+                            raise ValueError('file exceeds maximum allowed size')
+
+                        l = response.read(4096)
+
+                    response.close()
+                    if not response.will_close:
+                        # maybe we can reuse the connection
+                        http_conn = h
+
                     if errcode != 301:
                         redirect_permanent = False
                         redirect_penalty += 1
@@ -1554,6 +1616,7 @@ def RSS_Resource_simplify(url):
 
 if __name__ == '__main__':
     import sys
+
 
     if len(sys.argv) >= 2:
         resource = RSS_Resource(sys.argv[1])
