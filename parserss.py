@@ -586,8 +586,6 @@ class Feed_Parser(xmllib.XMLParser):
 
     def handle_xml(self, encoding, standalone):
         if not self._feed_encoding:
-            print 'handle_xml', encoding, self._charset, self._default_charset
-
             if self._charset:
                 encoding = self._charset
             elif not encoding:
