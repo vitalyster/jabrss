@@ -109,7 +109,7 @@ for s_key in s_keys:
         for res in res_ids:
             try:
                 res_users[res].remove(userid)
-            except ValueError:
+            except KeyError:
                 pass
 
 
