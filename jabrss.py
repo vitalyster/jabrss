@@ -53,7 +53,7 @@ Please refer to the JabRSS command reference at http://cmeerw.org/dev/book/view/
 And of course, if you like this service you might also consider a donation, see http://cmeerw.org/donate.html'''
 
 TEXT_MIGRATE = '''\
-In order to improve the JabRSS service it has been moved to a new Jabber server. Your settings have just been migrated to the new JabRSS instance. Please see http://jabrss.cmeerw.org for all details.'''
+In order to improve the JabRSS service it has been moved to a new Jabber server. Your settings have just been migrated to the new JabRSS instance. Please see http://cmeerw.org/dev/node/view/122 for all details.'''
 
 
 JABBER_SERVER = None
@@ -1304,6 +1304,8 @@ class JabberSessionEventHandler:
             if user.get_delivery_state(presence.show):
                 subs = None
                 if MIGRATE_TO != None and not user.get_migrated():
+                    # limit rate of account migration to at most 1 account
+                    # per 30 seconds
                     if last_migrated + 30 < time.time():
                         # migrate user to another JabRSS instance
                         subs = []
@@ -1336,6 +1338,7 @@ class JabberSessionEventHandler:
                     self._jab_session.sendPacket(self._jab_session.createMessage(MIGRATE_TO, msg_text, jabIConstMessage.mtNormal))
                     user.set_migrated(1)
                     last_migrated = time.time()
+                    self._jab_session.sendPacket(self._jab_session.createMessage(presence.sender, TEXT_MIGRATE, jabIConstMessage.mtNormal))
 
         elif (presence.type != jabIPresence.ptSubscribed):
             try:
