@@ -935,7 +935,7 @@ class JabberSessionEventHandler:
 
                     jid = item.getAttrib('jid')
                     if item.getAttrib('subscription') == 'both':
-                        subscribers[jid] = None
+                        subscribers[jid.lower()] = None
                     else:
                         iq = self._jab_session.createInfoQuery('', jabIInfoQuery.iqtSet)
                         query = iq.addQuery('roster')
