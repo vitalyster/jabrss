@@ -242,7 +242,7 @@ class DataStorage:
             return self._resources[res_id]
         except KeyError:
             resource_url = RSS_Resource_id2url(res_id)
-            self.get_resource(resource_url, res_cursor, False)
+            return self.get_resource(resource_url, res_cursor, False)
 
 
     def evict_resource(self, resource):
