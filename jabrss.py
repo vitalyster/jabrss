@@ -998,6 +998,12 @@ class JabberSessionEventHandler:
 
 
     def _process_subscribe(self, message, user, argstr):
+        if MIGRATE_TO:
+            reply = message.reply('Sorry, this JabRSS instance doesn\'t support subscriptions to new feeds anymore, please migrate your account to the new JabRSS instance at %s' % (MIGRATE_TO,))
+            self._jab_session.sendPacket(reply)
+            return
+
+
         args = string.split(argstr)
 
         for arg in args:
@@ -1353,8 +1359,14 @@ class JabberSessionEventHandler:
     def onPresenceRequest(self, presence):
         print 'presenceRequest', presence.sender.encode('iso8859-1', 'replace'), presence.type, presence.show
 
+
         # accept presence request
         if presence.type == jabIPresence.ptSubRequest:
+            if MIGRATE_TO:
+                message = self._jab_session.createMessage(presence.sender, 'Sorry, this JabRSS instance doesn\'t accept new users, please use the new JabRSS instance at %s instead.' % (MIGRATE_TO,), jabIConstMessage.mtNormal)
+                self._jab_session.sendPacket(message)
+                return
+
             self._jab_session.sendPacket(presence.reply(jabIPresence.ptSubscribed))
         elif presence.type == jabIPresence.ptUnsubRequest:
             self._jab_session.sendPacket(presence.reply(jabIPresence.ptUnsubscribed))
