@@ -542,7 +542,7 @@ ENTITIES = {
 
 
 class Feed_Parser(xmllib.XMLParser):
-    def __init__(self):
+    def __init__(self, charset=None, default_charset=None):
         xmllib.XMLParser.__init__(self, accept_utf8=1)
 
         self.elements = {
@@ -568,6 +568,9 @@ class Feed_Parser(xmllib.XMLParser):
             (self.atom_feed_start, self.atom_feed_end)
             }
 
+        self._charset = charset
+        self._default_charset = default_charset
+
         self._format = ''
         self._encoding = 'utf-8'
         self._feed_encoding = None
@@ -582,12 +585,21 @@ class Feed_Parser(xmllib.XMLParser):
         self._items = []
 
     def handle_xml(self, encoding, standalone):
-        if encoding and not self._feed_encoding:
-            encoding = string.lower(encoding)
-            if encoding[:8] == 'windows-':
-                encoding = 'cp' + encoding[8:]
+        if not self._feed_encoding:
+            print 'handle_xml', encoding, self._charset, self._default_charset
 
-            self._encoding = encoding
+            if self._charset:
+                encoding = self._charset
+            elif not encoding:
+                if self._default_charset:
+                    encoding = self._default_charset
+
+            if encoding:
+                encoding = encoding.lower()
+                if encoding[:8] == 'windows-':
+                    encoding = 'cp' + encoding[8:]
+
+                self._encoding = encoding
 
 
     def feed(self, data):
@@ -1271,7 +1283,20 @@ class RSS_Resource:
                     else:
                         decoder = Null_Decompressor()
 
-                    rss_parser = Feed_Parser()
+                    content_maintype = headers.getmaintype()
+                    content_subtype = headers.getsubtype()
+                    charset = headers.getparam('charset')
+                    default_charset = None
+
+                    if content_maintype == 'text':
+                        if content_subtype.startswith('xml'):
+                            # or maybe iso8859-1
+                            default_charset = 'us-ascii'
+                        else:
+                            # not strictly conforming here...
+                            default_charset = 'iso8859-1'
+
+                    rss_parser = Feed_Parser(charset, default_charset)
 
                     bytes_received = 0
                     bytes_processed = 0
