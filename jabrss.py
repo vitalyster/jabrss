@@ -1665,6 +1665,7 @@ class JabberSessionEventHandler:
         cursor = None
         users_unlocker = None
         redirect_resource = None
+        redirect_unlock = False
         redirects = []
 
         resource.lock(); need_unlock = True
@@ -1698,6 +1699,9 @@ class JabberSessionEventHandler:
                     elif redirect_resource != None:
                         resource.lock(); need_unlock = True
 
+                    if redirect_resource != None:
+                        redirect_resource.lock(); redirect_unlock = True
+
                     if len(new_items) > 0 or redirect_resource != None:
                         deliver_users = []
                         cursor = Cursor(db)
@@ -1708,20 +1712,16 @@ class JabberSessionEventHandler:
                                 user = storage.get_user_by_id(uid)
 
                                 if redirect_resource != None:
-                                    redirect_resource.lock()
                                     try:
-                                        try:
-                                            user.add_resource(redirect_resource,
-                                                              redirect_seq,
-                                                              cursor)
-                                        except ValueError:
-                                            pass
-                                        try:
-                                            dummy_user.remove_resource(redirect_resource, cursor)
-                                        except ValueError:
-                                            pass
-                                    finally:
-                                        redirect_resource.unlock()
+                                        user.add_resource(redirect_resource,
+                                                          redirect_seq,
+                                                          cursor)
+                                    except ValueError:
+                                        pass
+                                    try:
+                                        dummy_user.remove_resource(redirect_resource, cursor)
+                                    except ValueError:
+                                        pass
 
 
                                 if len(new_items) and user.get_delivery_state():
@@ -1756,6 +1756,9 @@ class JabberSessionEventHandler:
                         if need_unlock:
                             resource.unlock(); need_unlock = False
 
+                        if redirect_unlock:
+                            redirect_resource.unlock(); redirect_unlock = False
+
                         for user in deliver_users:
                             self._send_headlines(jab_session_proxy, user,
                                                  resource, new_items, True)
@@ -1765,6 +1768,8 @@ class JabberSessionEventHandler:
 
                 if need_unlock:
                     resource.unlock(); need_unlock = False
+                if redirect_unlock:
+                    redirect_resource.unlock(); redirect_unlock = False
                 if redirect_resource == None:
                     self.schedule_update(resource)
         finally:
@@ -1776,9 +1781,10 @@ class JabberSessionEventHandler:
         for resource, new_items, next_item_id in redirects:
             deliver_users = []
 
+            # remember to always lock the resource first
+            resource.lock(); need_unlock = True
             cursor = Cursor(db)
             cursor.begin()
-            resource.lock(); need_unlock = True
             try:
                 print 'processing updated resource', resource.url()
                 try:
