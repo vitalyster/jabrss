@@ -160,7 +160,6 @@ def get_db():
     return db
 
 db = get_db()
-res_db = RSS_Resource_db()
 
 
 class DataStorage:
@@ -812,8 +811,7 @@ class JabberSessionEventHandler:
         for row in cursor:
             total_users = row[0]
 
-        cursor = res_db.cursor()
-        cursor.execute('SELECT count(rid) FROM resource')
+        cursor.execute('SELECT count(rid) FROM (SELECT DISTINCT rid FROM user_resource)')
 
         total_resources = 0
         for row in cursor:
