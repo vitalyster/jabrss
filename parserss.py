@@ -62,7 +62,7 @@ random.seed()
 
 def RSS_Resource_db():
     db = apsw.Connection('jabrss_res.db')
-    db.setbusytimeout(3000)
+    db.setbusytimeout(10000)
 
     return db
 
@@ -192,6 +192,7 @@ class Cursor:
         else:
             self._cursor = _db.cursor()
 
+        self._locked = True
         RSS_Resource._db_sync.acquire()
 
     def __del__(self):
@@ -201,15 +202,35 @@ class Cursor:
         RSS_Resource._db_sync.release()
 
 
+    def unlock(self):
+        if self._txn:
+            self._cursor.execute('END')
+            self._txn = False
+
+        if self._locked:
+            RSS_Resource._db_sync.release()
+            self._locked = False
+
+    def lock(self):
+        if not self._locked:
+            RSS_Resource._db_sync.acquire()
+            self._locked = True
+
     def begin(self):
-        self._cursor.execute('BEGIN')
-        self._txn = True
+        self.lock()
+
+        if not self._txn:
+            self._cursor.execute('BEGIN')
+            self._txn = True
 
     def execute(self, stmt, bindings=None):
+        self.lock()
+
         if bindings == None:
             return self._cursor.execute(stmt)
         else:
             return self._cursor.execute(stmt, bindings)
+
 
     def getdb(self):
         return self._cursor.getconnection()
@@ -1055,7 +1076,7 @@ class RSS_Resource:
     http_proxy = None
 
 
-    def __init__(self, url, db_cursor=None):
+    def __init__(self, url, res_db=None):
         self._lock = thread.allocate_lock()
         self._url = url
         self._url_protocol, self._url_host, self._url_path = split_url(url)
@@ -1068,14 +1089,14 @@ class RSS_Resource:
         self._penalty = 0
         title, description, link = None, None, None
 
-        if db_cursor == None:
-            cursor = Cursor(RSS_Resource._db)
+        if res_db == None:
+            db = RSS_Resource._db
         else:
-            cursor = db_cursor
-        db = cursor.getdb()
+            db = res_db
+        cursor = Cursor(db)
 
         result = cursor.execute('SELECT rid, last_updated, last_modified, etag, invalid_since, redirect, redirect_seq, penalty, err_info, title, description, link FROM resource WHERE url=?',
-                       (self._url,))
+                                (self._url,))
         for row in result:
             self._id, self._last_updated, self._last_modified, self._etag, self._invalid_since, self._redirect, self._redirect_seq, self._penalty, self._err_info, title, description, link = row
 
@@ -1224,8 +1245,6 @@ class RSS_Resource:
                                 cursor = Cursor(db)
                                 redirect_items, redirect_seq = redirect_resource.get_headlines(0, cursor)
 
-                                cursor.begin()
-
                                 items, first_item_id, nr_new_items = self._process_new_items(redirect_items, cursor)
                                 del redirect_items
 
@@ -1234,6 +1253,7 @@ class RSS_Resource:
 
                                 self._redirect = redirect_resource._id
                                 self._redirect_seq = redirect_seq
+                                cursor.begin()
                                 cursor.execute('UPDATE resource SET redirect=?, redirect_seq=? WHERE rid=?',
                                                (self._redirect,
                                                 self._redirect_seq, self._id))
@@ -1527,7 +1547,12 @@ class RSS_Resource:
         nr_new_items = self._update_items(items, new_items)
         del new_items
         if nr_new_items:
+            # we must not have any other objects locked when trying to lock
+            # a resource
+            cursor.unlock()
             self.lock()
+
+        cursor.begin()
 
         if len(items) > RSS_Resource.NR_ITEMS:
             first_item_id += len(items) - RSS_Resource.NR_ITEMS

@@ -163,7 +163,7 @@ class Resource_Guard:
 
 def get_db():
     db = apsw.Connection('jabrss.db')
-    db.setbusytimeout(3000)
+    db.setbusytimeout(10000)
     return db
 
 class Cursor:
@@ -215,14 +215,18 @@ class DataStorage:
 
 
     def _redirect_cb(self, redirect_url, db, redirect_count):
-        redirect_resource = self.get_resource(redirect_url,
-                                              RSS_Resource_Cursor(db))
+        redirect_resource = self.get_resource(redirect_url, db)
+
         # prevent resource from being evicted until redirect is processed
+        cursor = Cursor(self._redirect_db)
         try:
-            dummy_user.add_resource(redirect_resource, None,
-                                    Cursor(self._redirect_db))
-        except ValueError:
-            pass
+            try:
+                dummy_user.add_resource(redirect_resource, None, cursor)
+            except ValueError:
+                pass
+        finally:
+            del cursor
+
         redirect_resource.unlock()
 
         new_items, next_item_id, redirect_target, redirect_seq, redirects = redirect_resource.update(db, redirect_count)
@@ -232,11 +236,14 @@ class DataStorage:
             redirects.insert(0, (redirect_resource, new_items, next_item_id))
         elif (redirect_target != None) or (redirect_resource._invalid_since):
             redirect_resource.lock()
+            cursor = Cursor(self._redirect_db)
             try:
-                dummy_user.remove_resource(redirect_resource,
-                                           Cursor(self._redirect_db))
-            except ValueError:
-                pass
+                try:
+                    dummy_user.remove_resource(redirect_resource, cursor)
+                except ValueError:
+                    pass
+            finally:
+                del cursor
             redirect_resource.unlock()
 
         if redirect_target != None:
@@ -257,7 +264,7 @@ class DataStorage:
     # get resource (by URL) from cache, database or create new object
     # @param res_cursor db cursor for resource database
     # @return resource (already locked, must be unlocked)
-    def get_resource(self, url, res_cursor=None, lock=True):
+    def get_resource(self, url, res_db=None, lock=True):
         resource_url = RSS_Resource_simplify(url)
 
         if lock:
@@ -267,7 +274,6 @@ class DataStorage:
             cached_resource = True
 
             try:
-                # TODO: possible race-condition with evict_resource
                 resource = self._resources[resource_url]
                 if lock:
                     resources_unlocker = None
@@ -276,7 +282,7 @@ class DataStorage:
             except KeyError:
                 if lock:
                     resources_unlocker = None
-                resource = RSS_Resource(resource_url, res_cursor)
+                resource = RSS_Resource(resource_url, res_db)
                 if lock:
                     resource.lock()
                     resources_unlocker = self.resources_lock()
@@ -305,14 +311,14 @@ class DataStorage:
         finally:
             del resources_unlocker
 
-    def get_resource_by_id(self, res_id, res_cursor=None):
+    def get_resource_by_id(self, res_id, res_db=None):
         resources_unlocker = self.resources_lock()
 
         try:
             return self._resources[res_id]
         except KeyError:
             resource_url = RSS_Resource_id2url(res_id)
-            return self.get_resource(resource_url, res_cursor, False)
+            return self.get_resource(resource_url, res_db, False)
 
 
     def evict_resource(self, resource):
@@ -404,7 +410,7 @@ class DataStorage:
                 try:
                     storage.get_resource_by_id(res_id)
                 except:
-                    print 'caught exception adding new user'
+                    print 'caught exception loading resource', res_id, 'for new user'
                     traceback.print_exc(file=sys.stdout)
 
             return user, jid_resource
