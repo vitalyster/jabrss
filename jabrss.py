@@ -1277,16 +1277,18 @@ class JabberSessionEventHandler:
 
                         redirect_url, redirect_seq = resource.redirect_info()
                         if redirect_url != None:
-                            redirect_resource = storage.get_resource(redirect_url)
-                            try:
-                                user.add_resource(redirect_resource, redirect_seq)
-                            except ValueError:
-                                pass
-
                             try:
                                 user.remove_resource(resource)
                             except ValueError:
                                 pass
+                            resource.unlock()
+
+                            resource = storage.get_resource(redirect_url)
+                            try:
+                                user.add_resource(resource, redirect_seq)
+                            except ValueError:
+                                pass
+
                         elif new_items or headline_id != old_id:
                             user.update_headline(resource, headline_id,
                                                  new_items)
@@ -1478,7 +1480,7 @@ class JabberSessionEventHandler:
         redirect_resource = None
         redirects = []
 
-        resource.lock(); need_unlock= True
+        resource.lock(); need_unlock = True
         try:
             uids = storage.get_resource_uids(resource, cursor)
 
@@ -1504,7 +1506,7 @@ class JabberSessionEventHandler:
                     new_items, next_item_id, redirect_resource, redirect_seq, redirects = resource.update(res_db)
 
                     if len(new_items) > 0:
-                        need_unlock= True
+                        need_unlock = True
 
                     if len(new_items) > 0 or redirect_resource != None:
                         deliver_users = []
