@@ -386,8 +386,14 @@ class Feed_Parser(xmllib.XMLParser):
             (self.rss_rss_start, self.rss_rss_end),
             'http://backend.userland.com/rss2 rss' :
             (self.rss_rss_start, self.rss_rss_end),
+            # RSS 0.90, see http://www.purplepages.ie/RSS/netscape/rss0.90.html
+            # RSS 0.91, see http://my.netscape.com/publish/formats/rss-spec-0.91.html
             'http://my.netscape.com/rdf/simple/0.9/ rss' :
             (self.rss_rss_start, self.rss_rss_end),
+            # non-standard, but allow anyway
+            'http://my.netscape.com/rdf/simple/0.91/ rss' :
+            (self.rss_rss_start, self.rss_rss_end),
+            # RSS 1.0, see http://web.resource.org/rss/1.0/spec
             'http://purl.org/rss/1.0/ rss' :
             (self.rss_rss_start, self.rss_rss_end),
             'http://purl.org/rss/2.0/ rss' :

@@ -196,6 +196,7 @@ class DataStorage:
                                                   res_uids_str[i:i + 4])[0])
             except KeyError:
                 self._res_uids[resource.id()] = res_uids
+            self._res_uids[resource.id()] = res_uids
             self._res_uids_db_sync.release()
 
         return res_uids
@@ -206,14 +207,22 @@ class DataStorage:
             self._res_uids[resource.id()] = res_uids
         res_uids.append(user.uid())
 
+        res_uids_str = string.join(map(lambda x: struct.pack('>l', x), res_uids), '')
         self._res_uids_db_sync.acquire()
-        self._res_uids_db['R' + struct.pack('>l', resource.id())] = string.join(map(lambda x: struct.pack('>l', x), res_uids), '')
+        try:
+            res_uids_old = self._res_uids_db['R' + struct.pack('>l', resource.id())]
+            if res_uids_str[:-4] != res_uids_old:
+                print 'XXX: db inconsistency in add_resource_user', resource.id(), user.uid()
+        except KeyError:
+            pass
+        self._res_uids_db['R' + struct.pack('>l', resource.id())] = res_uids_str
 
         if self._res_uids_db_updates > 64:
             self._res_uids_db_updates = 0
             self._res_uids_db.reorganize()
         else:
             self._res_uids_db_updates += 1
+
         self._res_uids_db_sync.release()
 
 
@@ -240,12 +249,23 @@ class DataStorage:
 
                 self._res_uids_db_sync.acquire()
                 try:
+                    res_uids_old = self._res_uids_db['R' + struct.pack('>l', resource.id())]
+                    if res_uids_old != struct.pack('>l', user.uid()):
+                        print 'XXX: db inconsistency in remove_resource_user', resource.id(), user.uid()
                     del self._res_uids_db['R' + struct.pack('>l', resource.id())]
                 except KeyError:
                     print 'KeyError: remove_resource_user(%d)' % (resource.id(),)
             else:
+                res_uids_str = string.join(map(lambda x: struct.pack('>l', x), res_uids), '')
                 self._res_uids_db_sync.acquire()
-                self._res_uids_db['R' + struct.pack('>l', resource.id())] = string.join(map(lambda x: struct.pack('>l', x), res_uids), '')
+                try:
+                    res_uids_old = self._res_uids_db['R' + struct.pack('>l', resource.id())]
+                    if len(res_uids_str) != (len(res_uids_old) - 4):
+                        print 'XXX: db inconsistency in remove_resource_user', resource.id(), user.uid()
+                except KeyError:
+                    pass
+
+                self._res_uids_db['R' + struct.pack('>l', resource.id())] = res_uids_str
 
             if self._res_uids_db_updates > 64:
                 self._res_uids_db_updates = 0
