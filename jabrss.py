@@ -110,6 +110,7 @@ jab_session = xpcom.components.classes[JABBERSESSION_CONTRACTID].createInstance(
 class DataStorage:
     def __init__(self):
         self._users = {}
+        self._users_sync = threading.Lock()
         self._resources = {}
         self._res_uids = {}
         self._res_uids_db = gdbm.open('jabrss_urlusers.db', 'c')
@@ -125,16 +126,29 @@ class DataStorage:
         except KeyError:
             pass
 
+
+    def users_lock(self):
+        self._users_sync.acquire()
+
+    def users_unlock(self):
+        self._users_sync.release()
+
+
+    # @return resource (already locked, must be unlocked)
     def get_resource(self, url):
         simple_url = RSS_Resource_simplify(url)
         try:
-            return self._resources[simple_url]
+            # TODO: possible race-condition with evict_resource
+            resource = self._resources[simple_url]
+            resource.lock()
         except KeyError:
             resource = RSS_Resource(simple_url)
+            resource.lock()
             self._resources[resource.url()] = resource
             self._resources[resource.id()] = resource
             RSS_Resource.schedule_update(resource)
-            return resource
+
+        return resource
 
     # @throws KeyError
     def get_cached_resource(self, url):
@@ -276,8 +290,13 @@ class DataStorage:
             return user, jid_resource
         except KeyError:
             user = JabberUser(jid, jid_resource, presence_show)
-            self._users[jid] = user
-            self._users[user.uid()] = user
+
+            self.users_lock()
+            try:
+                self._users[jid] = user
+                self._users[user.uid()] = user
+            finally:
+                self.users_unlock()
 
             for res_id in user._res_ids:
                 try:
@@ -289,18 +308,24 @@ class DataStorage:
             return user, jid_resource
 
     def evict_user(self, user):
+        self.users_lock()
         try:
-            del self._users[user.jid()]
-        except KeyError:
-            pass
+            try:
+                del self._users[user.jid()]
+            except KeyError:
+                pass
 
-        try:
-            del self._users[user.uid()]
-        except KeyError:
-            pass
+            try:
+                del self._users[user.uid()]
+            except KeyError:
+                pass
+        finally:
+            self.users_unlock()
 
     def evict_all_users(self):
+        self.users_lock()
         self._users = {}
+        self.users_unlock()
 
         self._res_uids_db_sync.acquire()
         self._res_uids_db.sync()
@@ -829,19 +854,21 @@ class JabberSessionEventHandler:
 
             try:
                 resource = storage.get_resource(url)
-                user.add_resource(resource)
+                try:
+                    user.add_resource(resource)
 
-                storage.add_resource_user(resource, user)
+                    storage.add_resource_user(resource, user)
 
-                new_items, headline_id = resource.get_headlines(-1)
-                if new_items:
-                    self._send_headlines(self._jab_session, user, resource,
-                                         new_items)
-                    user.update_headline(resource, headline_id, new_items)
+                    new_items, headline_id = resource.get_headlines(-1)
+                    if new_items:
+                        self._send_headlines(self._jab_session, user, resource,
+                                             new_items)
+                        user.update_headline(resource, headline_id, new_items)
+                finally:
+                    resource.unlock()
 
                 print user.jid().encode('iso8859-1', 'replace'), 'subscribed to', url
                 reply = message.reply('You have been subscribed to %s' % (url,))
-                storage.get_resource(url)
             except UrlError, url_error:
                 print user.jid().encode('iso8859-1', 'replace'), 'error (%s) subscribing to' % (url_error.args[0],), url
                 reply = message.reply('Error (%s) subscribing to %s' % (url_error.args[0], url))
@@ -863,8 +890,12 @@ class JabberSessionEventHandler:
 
             try:
                 resource = storage.get_cached_resource(url)
-                user.remove_resource(resource)
-                storage.remove_resource_user(resource, user)
+                resource.lock()
+                try:
+                    user.remove_resource(resource)
+                    storage.remove_resource_user(resource, user)
+                finally:
+                    resource.unlock()
 
                 print user.jid().encode('iso8859-1', 'replace'), 'unsubscribed from', url
                 reply = message.reply('You have been unsubscribed from %s' % (url,))
@@ -1252,41 +1283,55 @@ class JabberSessionEventHandler:
 
 
     def _update_resource(self, resource, jab_session_proxy):
-        uids = storage.get_resource_uids(resource)[:]
+        resource.lock(); need_unlock = 1
+        try:
+            uids = storage.get_resource_uids(resource)
 
-        used = 0
-        for uid in uids:
+            storage.users_lock()
             try:
-                user = storage.get_user_by_id(uid)
-                used = 1
-            except KeyError:
-                pass
+                used = 0
+                for uid in uids:
+                    try:
+                        user = storage.get_user_by_id(uid)
+                        used = 1
+                    except KeyError:
+                        pass
 
-        if not used:
-            storage.evict_resource(resource)
-        else:
-            try:
-                print time.asctime(), 'updating', resource.url()
-                channel_info, new_items, last_item_id = resource.update()
+                if not used:
+                    storage.evict_resource(resource)
+            finally:
+                storage.users_unlock()
 
-                if len(new_items) > 0:
-                    for uid in uids:
-                        try:
-                            user = storage.get_user_by_id(uid)
+            if used:
+                resource.unlock(); need_unlock = 0
+                try:
+                    print time.asctime(), 'updating', resource.url()
+                    channel_info, new_items, last_item_id = resource.update()
 
-                            if user.get_delivery_state():
-                                self._send_headlines(jab_session_proxy, user,
-                                                     resource, new_items, 1)
-                                user.update_headline(resource, last_item_id,
-                                                     new_items)
-                        except KeyError:
-                            # just means that the user is no longer online
-                            pass
-            except:
-                print 'exception caught updating', resource.url()
-                traceback.print_exc(file=sys.stdout)
+                    if len(new_items) > 0:
+                        resource.lock(); need_unlock = 1
+                        uids = storage.get_resource_uids(resource)
+                        for uid in uids:
+                            try:
+                                user = storage.get_user_by_id(uid)
 
-            self.schedule_update(resource)
+                                if user.get_delivery_state():
+                                    self._send_headlines(jab_session_proxy, user,
+                                                         resource, new_items, 1)
+                                    user.update_headline(resource, last_item_id,
+                                                         new_items)
+                            except KeyError:
+                                # just means that the user is no longer online
+                                pass
+                except:
+                    print 'exception caught updating', resource.url()
+                    traceback.print_exc(file=sys.stdout)
+
+                resource.unlock(); need_unlock = 0
+                self.schedule_update(resource)
+        finally:
+            if need_unlock:
+                resource.unlock()
 
 
 # register event handlers

@@ -831,6 +831,7 @@ class RSS_Resource:
 
 
     def __init__(self, url):
+        self._lock = threading.Lock()
         self._url = url
         self._url_protocol, self._url_host, self._url_path = split_url(url)
 
@@ -877,6 +878,13 @@ class RSS_Resource:
             self._first_item_id = 0
 
         RSS_Resource._db_sync.release()
+
+
+    def lock(self):
+        self._lock.acquire()
+
+    def unlock(self):
+        self._lock.release()
 
 
     def url(self):
