@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # Copyright (C) 2001-2004, Christof Meerwald
-# http://JabXPCOM.sunsite.dk
+# http://jabrss.cmeerw.org
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -43,7 +43,7 @@ re_validprotocol = re.compile('^(?P<protocol>[a-z]+):(?P<rest>.*)$')
 re_supportedprotocol = re.compile('^(http)$')
 
 re_validhost = re.compile('^(?P<host>[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+)(:(?P<port>[0-9a-z]+))?(?P<path>(/.*)?)$')
-re_blockhost = re.compile('^(10\.|172\.1[6789]\.|172\.2[0-9]\.|172\.3[01]\.|192\.168\.)')
+re_blockhost = re.compile('^(10\.|127\.|172\.1[6789]\.|172\.2[0-9]\.|172\.3[01]\.|192\.168\.)')
 
 re_blank = re.compile('([ \\t\\n][ \\t\\n]+|[\\t\\n])')
 
@@ -80,6 +80,9 @@ def split_url(url):
 
     if url_path == '':
         url_path = '/'
+
+    while url_path[:2] == '//':
+        url_path = url_path[1:]
 
     if re_blockhost.match(url_host):
         raise UrlError('host "%s" not allowed' % (url_host,))

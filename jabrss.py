@@ -27,9 +27,11 @@ from parserss import UrlError
 TEXT_WELCOME = '''\
 Welcome to JabRSS. Please note that the current privacy policy is quite simple: all your data are belong to me and might be sold to your favorite spammer. :-) For more information, please visit the JabRSS Web site at http://jabrss.cmeerw.org
 
-Now there is only one more thing to do before you can use JabRSS: you have to authorize the presence subscription request from JabRSS. This is necessary so that JabRSS knows your presence status and only sends you RSS headlines when you are online.
-
 BTW, if you like this service, you can help keeping it running by making a donation, see http://cmeerw.org/donate.html'''
+
+TEXT_NEWUSER = '''
+
+Now there is only one more thing to do before you can use JabRSS: you have to authorize the presence subscription request from JabRSS. This is necessary so that JabRSS knows your presence status and only sends you RSS headlines when you are online.'''
 
 TEXT_HELP = '''\
 Supported commands:
@@ -50,16 +52,22 @@ Please refer to the JabRSS command reference at http://cmeerw.org/dev/book/view/
 
 And of course, if you like this service you might also consider a donation, see http://cmeerw.org/donate.html'''
 
+TEXT_MIGRATE = '''\
+In order to improve the JabRSS service it has been moved to a new Jabber server. Your settings have just been migrated to the new JabRSS instance. Please see http://jabrss.cmeerw.org for all details.'''
+
 
 JABBER_SERVER = None
 JABBER_HOST = None
 JABBER_USER = None
 JABBER_PASSWORD = None
+MIGRATE_FROM = None
+MIGRATE_TO = None
 
 
 opts, args = getopt.getopt(sys.argv[1:], 'f:h:p:s:u:',
                            ['password-file=', 'password=',
-                            'server=', 'connect-host=', 'username='])
+                            'server=', 'connect-host=', 'username=',
+                            'migrate-from=', 'migrate-to='])
 
 for optname, optval in opts:
     if optname == '-f' or optname == '--password-file':
@@ -74,6 +82,10 @@ for optname, optval in opts:
         JABBER_SERVER = optval
     elif optname == '-u' or optname == '--username':
         JABBER_USER = optval
+    elif optname == '--migrate-from':
+        MIGRATE_FROM = optval.lower()
+    elif optname == '--migrate-to':
+        MIGRATE_TO = optval
 
 if JABBER_SERVER == None:
     JABBER_SERVER = raw_input('Jabber server: ')
@@ -334,7 +346,10 @@ class DataStorage:
             jid_resource = jid[pos + 1:]
             jid = jid[:pos]
         else:
-            jid_resource = ''
+            if presence_show == None:
+                jid_resource = None
+            else:
+                jid_resource = ''
 
         jid = jid.lower()
 
@@ -418,6 +433,8 @@ class DataStorage:
 storage = DataStorage()
 RSS_Resource._rename_cb = storage._rename_cb
 
+last_migrated = 0
+
 
 ##
 # Database schema:
@@ -449,6 +466,7 @@ class JabberUser:
     #   (0 = plain text, 1 = headline messages, 2 = chat message, 3 = reserved)
     # self._configuration & 0x001c .. deliver when away
     #   (4 = away, 8 = xa, 16 = dnd)
+    # self._configuration & 0x0020 .. migration flag
     # self._store_messages .. number of messages that should be stored
     # self._size_limit .. limit the size of descriptions
     # self._stat_start .. first day corresponding to _nr_headlines[-1]
@@ -457,7 +475,10 @@ class JabberUser:
     ##
     def __init__(self, jid, jid_resource, show=None):
         self._jid = jid
-        self._jid_resources = {jid_resource : show}
+        if jid_resource != None:
+            self._jid_resources = {jid_resource : show}
+        else:
+            self._jid_resources = {}
         self._update_presence()
 
         self._configuration = 0
@@ -566,16 +587,28 @@ class JabberUser:
         return self._configuration & 0x0003
 
 
+    def set_migrated(self, migrated):
+        if migrated:
+            migrated_val = 0x20
+        else:
+            migrated_val = 0
+        self._configuration = (self._configuration & ~0x0020) | migrated_val
+        self._update_configuration()
+
+    def get_migrated(self):
+        return (self._configuration & 0x0020) != 0
+
+
     def set_size_limit(self, size_limit):
         if size_limit > 0:
-            self._size_limit = min(size_limit, 4096)
+            self._size_limit = min(size_limit, 3072)
         else:
             self._size_limit = 0
         self._update_configuration()
 
     def get_size_limit(self):
         if self._size_limit > 0:
-            return min(self._size_limit, 4096)
+            return min(self._size_limit, 3072)
         else:
             return 1024
 
@@ -607,6 +640,16 @@ class JabberUser:
         JabberUser._db['U' + self._jid.encode('utf-8')] = self._uid_str + struct.pack('>lBB', self._configuration, self._store_messages, self._size_limit / 16)
         JabberUser._db_sync.release()
 
+    def set_configuration(self, conf, store_messages, size_limit):
+        self._configuration = conf
+        self._store_messages = store_messages
+        self._size_limit = size_limit
+        self._update_configuration()
+
+    def get_configuration(self):
+        return (self._configuration, self._store_messages, self._size_limit)
+
+
     def _update_presence(self):
         new_show = jabIPresence.stOffline
         for show in self._jid_resources.values():
@@ -616,6 +659,9 @@ class JabberUser:
         self._show = new_show
 
     def set_presence(self, jid_resource, show):
+        if show == None:
+            return
+
         if show > jabIPresence.stOffline:
             self._jid_resources[jid_resource] = show
         else:
@@ -900,13 +946,64 @@ class JabberSessionEventHandler:
         self._jab_session.sendPacket(reply)
 
 
+    def _process_migrate(self, message, argstr):
+        args = string.split(argstr)
+
+        jid = args[0]
+        conf = map(lambda x: string.atoi(x, 16), string.split(args[1], ','))
+        args = args[2:]
+        pos = string.find(jid, '/')
+        if pos != -1:
+            jid = jid[:pos]
+
+        msg_text = TEXT_MIGRATE
+        try:
+            storage.get_user(jid)
+        except KeyError:
+            msg_text += TEXT_NEWUSER
+
+        user, jid_resource = storage.get_new_user(jid, None)
+        print 'migrating user', user.jid().encode('iso8859-1', 'replace')
+        user.set_configuration(conf[0], conf[1], conf[2])
+
+        for arg in args:
+            try:
+                url = arg.encode('ascii')
+
+                resource = storage.get_resource(url)
+                try:
+                    user.add_resource(resource)
+
+                    storage.add_resource_user(resource, user)
+                    new_items, headline_id = resource.get_headlines(-1)
+                    if headline_id >= 0:
+                        # suppress headline delivery
+                        user.update_headline(resource, headline_id, [])
+                    else:
+                        user.update_headline(resource, 0x7fffffff, [])
+                finally:
+                    resource.unlock()
+
+            except UrlError, url_error:
+                pass
+            except ValueError:
+                pass
+            except:
+                print user.jid().encode('iso8859-1', 'replace'), 'error subscribing to', url
+                traceback.print_exc(file=sys.stdout)
+
+        self._jab_session.sendPacket(self._jab_session.createPresenceRequest(user.jid(), jabIPresence.ptSubRequest))
+
+        self._jab_session.sendPacket(self._jab_session.createMessage(user.jid(), msg_text, jabIConstMessage.mtNormal))
+
+
     def _process_subscribe(self, message, user, argstr):
         args = string.split(argstr)
 
         for arg in args:
-            url = arg.encode('ascii')
-
             try:
+                url = arg.encode('ascii')
+
                 resource = storage.get_resource(url)
                 try:
                     user.add_resource(resource)
@@ -1128,6 +1225,10 @@ class JabberSessionEventHandler:
         body = string.strip(message.body)
         print 'message', message.sender.encode('iso8859-1', 'replace'), body.encode('iso8859-1', 'replace')
 
+        if body[:8] == 'migrate ' and MIGRATE_FROM == message.sender.lower():
+            self._process_migrate(message, body[8:])
+            return
+
         try:
             user, jid_resource = storage.get_user(message.sender)
 
@@ -1158,7 +1259,7 @@ class JabberSessionEventHandler:
                 users.sort()
                 print repr(users)
             else:
-                reply = message.reply('Unknown command. Please refer to the documentation at http://JabXPCOM.sunsite.dk/jabrss/')
+                reply = message.reply('Unknown command. Please refer to the documentation at http://cmeerw.org/dev/book/view/30')
                 self._jab_session.sendPacket(reply)
         except KeyError:
             traceback.print_exc(file=sys.stdout)
@@ -1188,6 +1289,8 @@ class JabberSessionEventHandler:
         return ''
 
     def onPresence(self, presence, type):
+        global last_migrated
+
         print 'presence', presence.sender.encode('iso8859-1', 'replace'), presence.type, presence.show
 
         if (presence.type == jabIPresence.ptUnsubscribed):
@@ -1199,19 +1302,41 @@ class JabberSessionEventHandler:
                                                       presence.show)
 
             if user.get_delivery_state(presence.show):
+                subs = None
+                if MIGRATE_TO != None and not user.get_migrated():
+                    if last_migrated + 30 < time.time():
+                        # migrate user to another JabRSS instance
+                        subs = []
+
                 for res_id in user.resources():
                     resource = storage.get_resource_by_id(res_id)
+                    if subs != None:
+                        subs.append(resource.url())
                     try:
                         resource.lock()
                         headline_id = user.headline_id(resource)
+                        old_id = headline_id
 
                         new_items, headline_id = resource.get_headlines(headline_id)
                         if new_items:
-                            self._send_headlines(self._jab_session, user, resource,
+                            self._send_headlines(self._jab_session, user,
+                                                 resource, new_items)
+                            user.update_headline(resource, headline_id,
                                                  new_items)
-                            user.update_headline(resource, headline_id, new_items)
+                        elif headline_id != old_id:
+                            user.update_headline(resource, headline_id, [])
                     finally:
                         resource.unlock()
+
+                if subs != None:
+                    print 'migrating user', presence.sender.encode('iso8859-1', 'replace')
+                    msg_text = 'migrate %s ' % (user.jid(),)
+                    msg_text += '%08x,%02x,%04x ' % user.get_configuration()
+                    msg_text += ' '.join(subs)
+                    self._jab_session.sendPacket(self._jab_session.createMessage(MIGRATE_TO, msg_text, jabIConstMessage.mtNormal))
+                    user.set_migrated(1)
+                    last_migrated = time.time()
+
         elif (presence.type != jabIPresence.ptSubscribed):
             try:
                 user, jid_resource = storage.get_user(presence.sender)
@@ -1236,7 +1361,13 @@ class JabberSessionEventHandler:
         if presence.type == jabIPresence.ptSubRequest:
             self._jab_session.sendPacket(presence.reply(jabIPresence.ptSubRequest))
 
-            welcome_message = self._jab_session.createMessage(presence.sender, TEXT_WELCOME, jabIConstMessage.mtNormal)
+            msg_text = TEXT_WELCOME
+            try:
+                storage.get_user(presence.sender)
+            except KeyError:
+                msg_text += TEXT_NEWUSER
+
+            welcome_message = self._jab_session.createMessage(presence.sender, msg_text, jabIConstMessage.mtNormal)
             self._jab_session.sendPacket(welcome_message)
 
 
