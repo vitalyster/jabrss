@@ -1,5 +1,5 @@
 #!/usr/bin/python
-# Copyright (C) 2001-2003, Christof Meerwald
+# Copyright (C) 2001-2004, Christof Meerwald
 # http://JabXPCOM.sunsite.dk
 
 # This program is free software; you can redistribute it and/or modify
@@ -1134,13 +1134,17 @@ class JabberSessionEventHandler:
             if user.get_delivery_state(presence.show):
                 for res_id in user.resources():
                     resource = storage.get_resource_by_id(res_id)
-                    headline_id = user.headline_id(resource)
+                    try:
+                        resource.lock()
+                        headline_id = user.headline_id(resource)
 
-                    new_items, headline_id = resource.get_headlines(headline_id)
-                    if new_items:
-                        self._send_headlines(self._jab_session, user, resource,
-                                             new_items)
-                        user.update_headline(resource, headline_id, new_items)
+                        new_items, headline_id = resource.get_headlines(headline_id)
+                        if new_items:
+                            self._send_headlines(self._jab_session, user, resource,
+                                                 new_items)
+                            user.update_headline(resource, headline_id, new_items)
+                    finally:
+                        resource.unlock()
         else:
             try:
                 user, jid_resource = storage.get_user(presence.sender)
@@ -1309,7 +1313,7 @@ class JabberSessionEventHandler:
                     channel_info, new_items, last_item_id = resource.update()
 
                     if len(new_items) > 0:
-                        resource.lock(); need_unlock = 1
+                        need_unlock = 1
                         uids = storage.get_resource_uids(resource)
                         for uid in uids:
                             try:

@@ -1,5 +1,5 @@
 #!/usr/bin/python
-# Copyright (C) 2001-2003, Christof Meerwald
+# Copyright (C) 2001-2004, Christof Meerwald
 # http://JabXPCOM.sunsite.dk
 
 # This program is free software; you can redistribute it and/or modify
@@ -817,7 +817,7 @@ class RSS_Resource:
     NR_ITEMS = 48
 
     _db = gdbm.open('jabrss_urls.db', 'c')
-    _db.reorganize()
+    #_db.reorganize()
     _db_updates = 0
     _db_sync = threading.Lock()
 
@@ -917,6 +917,8 @@ class RSS_Resource:
         return self._history
 
 
+    # @return (channel_info, new_items, last_item_id)
+    # locks the resource object if new_items are returned
     def update(self):
         error_info = None
         nr_new_items = 0
@@ -1073,6 +1075,8 @@ class RSS_Resource:
                     self._invalid_since = 0
 
                     if nr_new_items:
+                        self.lock()
+
                         # update history information
                         self._history.append((int(time.time()), nr_new_items))
                         self._history = self._history[-16:]
@@ -1083,7 +1087,7 @@ class RSS_Resource:
 
                         if RSS_Resource._db_updates > 64:
                             RSS_Resource._db_updates = 0
-                            RSS_Resource._db.reorganize()
+                            #RSS_Resource._db.reorganize()
                         else:
                             RSS_Resource._db_updates = RSS_Resource._db_updates + 1
                         RSS_Resource._db_sync.release()
