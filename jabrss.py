@@ -20,7 +20,7 @@ import gdbm, getopt, os, string, struct, sys, thread, threading, time
 import traceback
 import xpcom.components
 
-from parserss import RSS_Resource, RSS_Resource_id2url
+from parserss import RSS_Resource, RSS_Resource_id2url, RSS_Resource_simplify
 
 
 TEXT_WELCOME = 'Welcome to jabrss. Please note that this service is still in BETA and that the current privacy policy is quite simple: all your data are belong to me and might be sold to your favorite spammer. :-) For more information, please visit the jabrss Web site at http://JabXPCOM.sunsite.dk/jabrss/'
@@ -118,10 +118,11 @@ class DataStorage:
 
 
     def get_resource(self, url):
+        simple_url = RSS_Resource_simplify(url)
         try:
-            return self._resources[url]
+            return self._resources[simple_url]
         except KeyError:
-            resource = RSS_Resource(url)
+            resource = RSS_Resource(simple_url)
             self._resources[resource.url()] = resource
             self._resources[resource.id()] = resource
             RSS_Resource.schedule_update(resource)
