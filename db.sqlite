@@ -68,6 +68,8 @@ CREATE TABLE res.resource (
     etag TEXT,
     hash BLOB,
     invalid_since INTEGER, -- UNIX timestamp
+    redirect INTEGER,
+    redirect_seq INTEGER,
     penalty INTEGER NOT NULL DEFAULT 0, -- 1024-based (1024 = 1.0)
     err_info TEXT,
     title TEXT,

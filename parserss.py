@@ -1,5 +1,5 @@
 #!/usr/bin/python
-# Copyright (C) 2001-2004, Christof Meerwald
+# Copyright (C) 2001-2005, Christof Meerwald
 # http://jabrss.cmeerw.org
 
 # This program is free software; you can redistribute it and/or modify
@@ -95,7 +95,7 @@ def split_url(url):
     if re_blockhost.match(url_host):
         raise UrlError('host "%s" not allowed' % (url_host,))
 
-    return (url_protocol, url_host, url_path)
+    return url_protocol, url_host, url_path
 
 
 def normalize_text(s):
@@ -133,8 +133,8 @@ def normalize_item(item):
 
 
 def compare_items(l, r):
-    ltitle, llink = (l.title, l.link)
-    rtitle, rlink = (r.title, r.link)
+    ltitle, llink = l.title, l.link
+    rtitle, rlink = r.title, r.link
 
     if ltitle == rtitle:
         lmo = re_spliturl.match(llink)
@@ -896,29 +896,35 @@ class RSS_Resource:
     NR_ITEMS = 48
 
     _db = RSS_Resource_db()
-    _rename_cb = None
+    _redirect_cb = None
     http_proxy = None
 
 
-    def __init__(self, url):
+    def __init__(self, url, db_cursor=None):
         self._lock = threading.Lock()
         self._url = url
         self._url_protocol, self._url_host, self._url_path = split_url(url)
 
-        db = RSS_Resource._db
-        cursor = db.cursor()
+        if db_cursor == None:
+            cursor = RSS_Resource._db.cursor()
+        else:
+            cursor = db_cursor
+        db = cursor.getconnection()
 
-        self._last_updated, self._last_modified = (None, None)
+        self._id = None
+        self._last_updated, self._last_modified = None, None
         self._etag = None
-        self._invalid_since, self._err_info = (None, None)
+        self._invalid_since, self._err_info = None, None
+        self._redirect, self._redirect_seq = None, None
         self._penalty = 0
-        title, description, link = (None, None, None)
+        title, description, link = None, None, None
 
-        try:
-            cursor.execute('SELECT rid, last_updated, last_modified, etag, invalid_since, penalty, err_info, title, description, link FROM resource WHERE URL=?',
-                           (self._url,))
-            self._id, self._last_updated, self._last_modified, self._etag, self._invalid_since, self._penalty, self._err_info, title, description, link = cursor.next()
-        except StopIteration:
+        cursor.execute('SELECT rid, last_updated, last_modified, etag, invalid_since, redirect, redirect_seq, penalty, err_info, title, description, link FROM resource WHERE url=?',
+                       (self._url,))
+        for row in cursor:
+            self._id, self._last_updated, self._last_modified, self._etag, self._invalid_since, self._redirect, self._redirect_seq, self._penalty, self._err_info, title, description, link = row
+
+        if self._id == None:
             cursor.execute('INSERT INTO resource (url) VALUES (?)',
                            (self._url,))
             self._id = db.last_insert_rowid()
@@ -964,11 +970,29 @@ class RSS_Resource:
         return self._channel_info
 
     def times(self):
-        last_updated, last_modified, invalid_since = (self._last_updated, self._last_modified, self._invalid_since)
+        last_updated, last_modified, invalid_since = self._last_updated, self._last_modified, self._invalid_since
         if last_modified == None:
             last_modified = 0
     
-        return (last_updated, last_modified, invalid_since)
+        return last_updated, last_modified, invalid_since
+
+    def redirect_info(self, db_cursor=None):
+        if self._redirect == None:
+            return None, None
+
+        if db_cursor == None:
+            cursor = RSS_Resource._db.cursor()
+        else:
+            cursor= db_cursor
+
+        cursor.execute('SELECT url FROM resource WHERE rid=?',
+                       (self._redirect,))
+        redirect_url = None
+        for row in cursor:
+            redirect_url = row[0]
+
+        return redirect_url, self._redirect_seq
+
 
     def error_info(self):
         return self._err_info
@@ -978,9 +1002,9 @@ class RSS_Resource:
         return self._history
 
 
-    # @return (channel_info, new_items, next_item_id)
+    # @return ([item], next_item_id, redirect_resource)
     # locks the resource object if new_items are returned
-    def update(self, db=None):
+    def update(self, db=None, redirect_count=5):
         error_info = None
         nr_new_items = 0
         feed_xml_downloaded = False
@@ -988,9 +1012,10 @@ class RSS_Resource:
         first_item_id = None
         items = []
 
+        prev_updated = self._last_updated
         self._last_updated = int(time.time())
 
-        if self._invalid_since == None:
+        if not self._invalid_since:
             # expect the worst, will be reset later
             self._invalid_since = self._last_updated
 
@@ -1001,36 +1026,50 @@ class RSS_Resource:
         cursor = db.cursor()
         db_txn_end = None
 
+        redirect_tries = redirect_count
+        redirect_permanent = True
+        redirect_resource = None
+        redirect_seq = None
+        redirects = []
 
         try:
-            redirect_tries = 5
-            redirect_permanent = 1
-            url_protocol, url_host, url_path = (self._url_protocol, self._url_host, self._url_path)
+            url_protocol, url_host, url_path = self._url_protocol, self._url_host, self._url_path
 
             while redirect_tries > 0:
                 redirect_tries = -(redirect_tries - 1)
 
                 if redirect_permanent:
-                    simple_url = url_protocol + '://' + url_host + url_path
-                    if simple_url != self._url:
-                        merge_needed = False
-                        cursor.execute('SELECT rid FROM resource WHERE url=?',
-                                       (simple_url,))
-                        for rid in cursor:
-                            merge_needed = True
+                    redirect_url = url_protocol + '://' + url_host + url_path
+                    if redirect_url != self._url:
+                        print 'redirect: %s -> %s' % (self._url.encode('iso8859-1', 'replace'), redirect_url.encode('iso8859-1', 'replace'))
+                        if RSS_Resource._redirect_cb:
+                            redirect_resource, redirects = RSS_Resource._redirect_cb(redirect_url, cursor, -redirect_tries)
 
-                        if merge_needed:
-                            print 'permanent redirect: %s -> %s (merge needed)' % (self._url.encode('iso8859-1', 'replace'), simple_url.encode('iso8859-1', 'replace'))
-                        else:
-                            print 'permanent redirect: %s -> %s' % (self._url.encode('iso8859-1', 'replace'), simple_url.encode('iso8859-1', 'replace'))
+                            # only perform the redirect if target is valid
+                            if redirect_resource._invalid_since:
+                                error_info = redirect_resource._err_info
+                                self._last_modified = redirect_resource._last_modified
+                                self._etag = redirect_resource._etag
+                                redirect_resource = None
+                            else:
+                                redirect_items, redirect_seq = redirect_resource.get_headlines(0, cursor)
 
-                            if RSS_Resource._rename_cb:
-                                RSS_Resource._rename_cb(self._url, simple_url)
+                                db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
+                                cursor.execute('BEGIN')
 
-                                cursor.execute('UPDATE resource SET url=? WHERE rid=?',
-                                               (simple_url, self._id))
-                                self._url = simple_url
-                                self._url_protocol, self._url_host, self._url_path = (url_protocol, url_host, url_path)
+                                items, first_item_id, nr_new_items = self._process_new_items(redirect_items, cursor)
+                                del redirect_items
+
+                                self._last_modified = None
+                                self._etag = None
+
+                                self._redirect = redirect_resource._id
+                                self._redirect_seq = redirect_seq
+                                cursor.execute('UPDATE resource SET redirect=?, redirect_seq=? WHERE rid=?',
+                                               (self._redirect,
+                                                self._redirect_seq, self._id))
+
+                            break
 
 
                 if RSS_Resource.http_proxy:
@@ -1133,83 +1172,14 @@ class RSS_Resource:
                                    (hash_buffer, self._id, hash_buffer))
                     feed_xml_changed = (db.changes() != 0)
 
-                    if self._channel_info != new_channel_info:
-                        self._channel_info = new_channel_info
-
-                        cursor.execute('UPDATE resource SET title=?, link=?, description=? WHERE rid=?',
-                                       (self._channel_info.title,
-                                        self._channel_info.link,
-                                        self._channel_info.descr,
-                                        self._id))
-
-                    items = []
-                    first_item_id = None
-                    cursor.execute('SELECT seq_nr, published, title, link, descr_plain, descr_xhtml FROM resource_data WHERE rid=? ORDER BY seq_nr',
-                                   (self._id,))
-                    for seq_nr, published, title, link, descr_plain, descr_xhtml in cursor:
-                        items.append(Data(published=published,
-                                          title=title, link=link,
-                                          descr_plain=descr_plain,
-                                          descr_xhtml=descr_xhtml))
-
-                        if first_item_id == None or seq_nr < first_item_id:
-                            first_item_id = seq_nr
-
-                    if first_item_id == None:
-                        first_item_id = 0
-                    nr_old_items = len(items)
+                    self._update_channel_info(new_channel_info, cursor)
 
                     new_items = map(lambda x: normalize_item(x),
                                     rss_parser._items[:RSS_Resource.NR_ITEMS])
                     new_items.reverse()
-                    for item in new_items:
-                        found = False
 
-                        for i in range(0, nr_old_items):
-                            if compare_items(items[i], item):
-                                items[i] = item
-                                found = True
-
-                        if not found:
-                            items.append(item)
-                            nr_new_items = nr_new_items + 1
-
-                    if nr_new_items:
-                        self.lock()
-
-                    if len(items) > RSS_Resource.NR_ITEMS:
-                        first_item_id += len(items) - RSS_Resource.NR_ITEMS
-                        del items[:-RSS_Resource.NR_ITEMS]
-                        cursor.execute('DELETE FROM resource_data WHERE rid=? AND seq_nr<?',
-                                       (self._id, first_item_id))
-
-                    # RSS resource is valid
-                    self._invalid_since = None
-
-                    if nr_new_items:
-                        # update history information
-                        self._history.append((int(time.time()), nr_new_items))
-                        self._history = self._history[-16:]
-
-                        history_times = map(lambda x: x[0], self._history)
-                        if len(history_times) < 16:
-                            history_times += (16 - len(history_times)) * [None]
-
-                        history_nr = map(lambda x: x[1], self._history)
-                        if len(history_nr) < 16:
-                            history_nr += (16 - len(history_nr)) * [None]
-
-                        cursor.execute('INSERT INTO resource_history (rid, time_items0, time_items1, time_items2, time_items3, time_items4, time_items5, time_items6, time_items7, time_items8, time_items9, time_items10, time_items11, time_items12, time_items13, time_items14, time_items15, nr_items0, nr_items1, nr_items2, nr_items3, nr_items4, nr_items5, nr_items6, nr_items7, nr_items8, nr_items9, nr_items10, nr_items11, nr_items12, nr_items13, nr_items14, nr_items15) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                                       tuple([self._id] + history_times + history_nr))
-
-                        i = first_item_id
-                        for item in items:
-                            cursor.execute('INSERT INTO resource_data (rid, seq_nr, title, link, descr_plain, descr_xhtml) VALUES (?, ?, ?, ?, ?, ?)',
-                                           (self._id, i,
-                                            item.title, item.link,
-                                            item.descr_plain,
-                                            item.descr_xhtml))
-                            i += 1
+                    items, first_item_id, nr_new_items = self._process_new_items(new_items, cursor)
+                    del new_items
 
                 # handle "304 Not Modified"
                 elif errcode == 304:
@@ -1219,7 +1189,7 @@ class RSS_Resource:
                 # "307 Temporary Redirect"
                 elif (errcode >= 300) and (errcode < 400):
                     if errcode != 301:
-                        redirect_permanent = 0
+                        redirect_permanent = False
 
                     redirect_url = headers.get('location', None)
                     if redirect_url:
@@ -1240,6 +1210,9 @@ class RSS_Resource:
                 else:
                     print errcode, errmsg, headers
                     error_info = 'HTTP: %d %s' % (errcode, errmsg)
+
+            if self._invalid_since and not error_info and redirect_tries == 0:
+                error_info = 'redirect: maximum number of redirects exceeded'
         except socket.error, e:
             error_info = 'socket: ' + str(e)
         except TimeoutException, e:
@@ -1271,7 +1244,7 @@ class RSS_Resource:
             cursor.execute('UPDATE resource SET err_info=? WHERE rid=?',
                            (self._err_info, self._id))
 
-        if self._invalid_since != 0:
+        if not self._invalid_since:
             if feed_xml_downloaded:
                 if nr_new_items > 0:
                     # downloaded and new items available, good
@@ -1291,14 +1264,99 @@ class RSS_Resource:
                         self._invalid_since, self._penalty, self._id))
 
         if nr_new_items:
-            return self._channel_info, items[-nr_new_items:], first_item_id + len(items)
+            new_items = items[-nr_new_items:]
+            next_item_id = first_item_id + len(items)
         else:
-            return self._channel_info, [], None
+            new_items = []
+            next_item_id = None
+
+        return new_items, next_item_id, redirect_resource, redirect_seq, redirects
 
 
-    # @return (new items, next id)
-    def get_headlines(self, first_id):
-        cursor = RSS_Resource._db.cursor()
+    def _update_channel_info(self, new_channel_info, cursor):
+        if self._channel_info != new_channel_info:
+            self._channel_info = new_channel_info
+
+            cursor.execute('UPDATE resource SET title=?, link=?, description=? WHERE rid=?',
+                           (self._channel_info.title,
+                            self._channel_info.link,
+                            self._channel_info.descr,
+                            self._id))
+
+
+    # @return ([item], first_item_id, nr_new_items)
+    def _process_new_items(self, new_items, cursor):
+        items, next_item_id = self.get_headlines(0, cursor)
+        first_item_id = next_item_id - len(items)
+
+        nr_new_items = self._update_items(items, new_items)
+        del new_items
+        if nr_new_items:
+            self.lock()
+
+        if len(items) > RSS_Resource.NR_ITEMS:
+            first_item_id += len(items) - RSS_Resource.NR_ITEMS
+            del items[:-RSS_Resource.NR_ITEMS]
+            cursor.execute('DELETE FROM resource_data WHERE rid=? AND seq_nr<?',
+                           (self._id, first_item_id))
+
+        # RSS resource is valid
+        self._invalid_since = None
+
+        if nr_new_items:
+            # update history information
+            self._history.append((int(time.time()), nr_new_items))
+            self._history = self._history[-16:]
+
+            history_times = map(lambda x: x[0], self._history)
+            if len(history_times) < 16:
+                history_times += (16 - len(history_times)) * [None]
+
+            history_nr = map(lambda x: x[1], self._history)
+            if len(history_nr) < 16:
+                history_nr += (16 - len(history_nr)) * [None]
+
+            cursor.execute('INSERT INTO resource_history (rid, time_items0, time_items1, time_items2, time_items3, time_items4, time_items5, time_items6, time_items7, time_items8, time_items9, time_items10, time_items11, time_items12, time_items13, time_items14, time_items15, nr_items0, nr_items1, nr_items2, nr_items3, nr_items4, nr_items5, nr_items6, nr_items7, nr_items8, nr_items9, nr_items10, nr_items11, nr_items12, nr_items13, nr_items14, nr_items15) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                           tuple([self._id] + history_times + history_nr))
+
+            i = first_item_id
+            for item in items:
+                cursor.execute('INSERT INTO resource_data (rid, seq_nr, title, link, descr_plain, descr_xhtml) VALUES (?, ?, ?, ?, ?, ?)',
+                               (self._id, i,
+                                item.title, item.link,
+                                item.descr_plain,
+                                item.descr_xhtml))
+                i += 1
+
+        return items, first_item_id, nr_new_items
+
+
+    # @return nr_new_items
+    def _update_items(self, items, new_items):
+        nr_old_items = len(items)
+        nr_new_items = 0
+
+        for item in new_items:
+            found = False
+
+            for i in range(0, nr_old_items):
+                if compare_items(items[i], item):
+                    items[i] = item
+                    found = True
+
+            if not found:
+                items.append(item)
+                nr_new_items = nr_new_items + 1
+
+        return nr_new_items
+
+
+    # @return ([item], next id)
+    def get_headlines(self, first_id, db_cursor=None):
+        if db_cursor == None:
+            cursor = RSS_Resource._db.cursor()
+        else:
+            cursor = db_cursor
 
         if first_id == None:
             first_id = 0
@@ -1310,7 +1368,8 @@ class RSS_Resource:
         for seq_nr, published, title, link, descr_plain, descr_xhtml in cursor:
             if seq_nr >= last_id:
                 last_id = seq_nr + 1
-            items.append(Data(title=title, link=link, descr_plain=descr_plain,
+            items.append(Data(published=published, title=title, link=link,
+                              descr_plain=descr_plain,
                               descr_xhtml=descr_xhtml))
 
         return items, last_id
@@ -1373,8 +1432,11 @@ class RSS_Resource:
             return self._last_updated + interval
 
 
-def RSS_Resource_id2url(res_id):
-    cursor = RSS_Resource._db.cursor()
+def RSS_Resource_id2url(res_id, db_cursor=None):
+    if db_cursor == None:
+        cursor = RSS_Resource._db.cursor()
+    else:
+        cursor = db_cursor
 
     url = None
     cursor.execute('SELECT url FROM resource WHERE rid=?',
