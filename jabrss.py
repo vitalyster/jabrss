@@ -16,7 +16,7 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
 # USA
 
-import gdbm, getopt, os, string, struct, sys, thread, threading, time
+import bisect, gdbm, getopt, os, string, struct, sys, thread, threading, time
 import traceback
 import xpcom.components
 
@@ -1249,24 +1249,29 @@ class JabberSessionEventHandler:
 
                 items = items[-user.get_store_messages():]
 
-            for title, link, descr in items:
-                if descr:
-                    description = descr
-                else:
-                    description = title
+            for item in items:
+                try:
+                    title, link, descr = item
 
-                message = jab_session.createMessage(user.jid(),
-                                                    description[:user.get_size_limit()],
-                                                    jabIConstMessage.mtHeadline)
-                message.setSubject(resource.channel_info()[0])
-                message.queryInterface(jabIPacket)
-                oob_ext = message.addExtension('oob')
-                oob_url = oob_ext.addElement('url')
-                oob_url.addCDATA(link)
-                oob_desc = oob_ext.addElement('desc')
-                oob_desc.addCDATA(title)
+                    if descr:
+                        description = descr
+                    else:
+                        description = title
 
-                jab_session.sendPacket(message)
+                    message = jab_session.createMessage(user.jid(),
+                                                        description[:user.get_size_limit()],
+                                                        jabIConstMessage.mtHeadline)
+                    message.setSubject(resource.channel_info()[0])
+                    message.queryInterface(jabIPacket)
+                    oob_ext = message.addExtension('oob')
+                    oob_url = oob_ext.addElement('url')
+                    oob_url.addCDATA(link)
+                    oob_desc = oob_ext.addElement('desc')
+                    oob_desc.addCDATA(title)
+
+                    jab_session.sendPacket(message)
+                except ValueError:
+                    print 'trying to unpack tuple of wrong size', repr(item)
 
 
     def schedule_update(self, resource):
@@ -1274,13 +1279,10 @@ class JabberSessionEventHandler:
         next_update = resource.next_update()
         print 'scheduling', resource.url(), time.asctime(time.localtime(next_update))
 
-        i = 0
-        while (i < len(self._update_queue)) and (next_update >= self._update_queue[i][0]):
-            i = i + 1
-
-        self._update_queue.insert(i, (next_update, resource))
-        if i == 0:
+        bisect.insort(self._update_queue, (next_update, resource))
+        if self._update_queue[0] == (next_update, resource):
             self._update_queue_cond.notifyAll()
+
         self._update_queue_cond.release()
 
 
