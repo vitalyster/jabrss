@@ -199,7 +199,8 @@ class Cursor:
         if self._txn:
             self._cursor.execute('END')
 
-        RSS_Resource._db_sync.release()
+        if self._locked:
+            RSS_Resource._db_sync.release()
 
 
     def unlock(self):

@@ -1467,6 +1467,8 @@ class JabberSessionEventHandler:
 
                             redirect_url, redirect_seq = resource.redirect_info()
                             if redirect_url != None:
+                                print 'processing redirect to', redirect_url
+
                                 try:
                                     user.remove_resource(resource)
                                 except ValueError:
