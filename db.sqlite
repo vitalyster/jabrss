@@ -1,0 +1,123 @@
+-- -*- SQL -*-
+-- Copyright (C) 2004, Christof Meerwald
+-- http://jabrss.cmeerw.org
+
+-- This program is free software; you can redistribute it and/or modify
+-- it under the terms of the GNU General Public License as published by
+-- the Free Software Foundation; version 2 dated June, 1991.
+--
+-- This program is distributed in the hope that it will be useful, but
+-- WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+-- General Public License for more details.
+--
+-- You should have received a copy of the GNU General Public License
+-- along with this program; if not, write to the Free Software
+-- Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
+-- USA
+
+CREATE TABLE user (
+    uid INTEGER PRIMARY KEY,
+    jid TEXT NOT NULL,
+    conf INTEGER NOT NULL,
+    store_messages INTEGER NOT NULL DEFAULT 16,
+    size_limit INTEGER,
+    UNIQUE (jid)
+);
+
+CREATE TABLE user_stats (
+    uid INTEGER NOT NULL,
+    start INTEGER NOT NULL, -- day of year
+    nr_msgs0 SMALLINT,
+    size_msgs0 SMALLINT,
+    nr_msgs1 SMALLINT,
+    size_msgs1 SMALLINT,
+    nr_msgs2 SMALLINT,
+    size_msgs2 SMALLINT,
+    nr_msgs3 SMALLINT,
+    size_msgs3 SMALLINT,
+    nr_msgs4 SMALLINT,
+    size_msgs4 SMALLINT,
+    nr_msgs5 SMALLINT,
+    size_msgs5 SMALLINT,
+    nr_msgs6 SMALLINT,
+    size_msgs6 SMALLINT,
+    nr_msgs7 SMALLINT,
+    size_msgs7 SMALLINT,
+    UNIQUE (uid)
+);
+
+CREATE TABLE user_resources (
+    uid INTEGER NOT NULL,
+    rid INTEGER NOT NULL,
+    seq_nr INTEGER,
+    UNIQUE (uid, rid)
+);
+
+CREATE INDEX user_resources_rid ON
+    user_resources (rid);
+
+
+ATTACH DATABASE "jabrss_res.db" AS res;
+
+CREATE TABLE res.resource (
+    rid INTEGER PRIMARY KEY,
+    url TEXT NOT NULL,
+    seq_nr INTEGER,
+    last_updated INTEGER, -- UNIX timestamp
+    last_modified INTEGER, -- UNIX timestamp
+    invalid_since INTEGER, -- UNIX timestamp
+    err_info TEXT,
+    title TEXT,
+    description TEXT,
+    link TEXT,
+    UNIQUE (url)
+);
+
+CREATE TABLE res.resource_history (
+    rid INTEGER NOT NULL,
+    time_items0 INTEGER, -- UNIX timestamp
+    nr_items0 SMALLINT,
+    time_items1 INTEGER,
+    nr_items1 SMALLINT,
+    time_items2 INTEGER,
+    nr_items2 SMALLINT,
+    time_items3 INTEGER,
+    nr_items3 SMALLINT,
+    time_items4 INTEGER,
+    nr_items4 SMALLINT,
+    time_items5 INTEGER,
+    nr_items5 SMALLINT,
+    time_items6 INTEGER,
+    nr_items6 SMALLINT,
+    time_items7 INTEGER,
+    nr_items7 SMALLINT,
+    time_items8 INTEGER,
+    nr_items8 SMALLINT,
+    time_items9 INTEGER,
+    nr_items9 SMALLINT,
+    time_items10 INTEGER,
+    nr_items10 SMALLINT,
+    time_items11 INTEGER,
+    nr_items11 SMALLINT,
+    time_items12 INTEGER,
+    nr_items12 SMALLINT,
+    time_items13 INTEGER,
+    nr_items13 SMALLINT,
+    time_items14 INTEGER,
+    nr_items14 SMALLINT,
+    time_items15 INTEGER,
+    nr_items15 SMALLINT,
+    UNIQUE (rid)
+);
+
+CREATE TABLE res.resource_data (
+    rid INTEGER NOT NULL,
+    seq_nr INTEGER NOT NULL,
+    published INTEGER,
+    title TEXT,
+    link TEXT,
+    descr_plain TEXT,
+    descr_xhtml TEXT,
+    UNIQUE (rid, seq_nr)
+);
