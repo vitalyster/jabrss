@@ -513,6 +513,8 @@ class RSS_Parser(xmllib.XMLParser):
 
         if self._state & 0x03:
             elem[(self._state & 0x03) - 1] = elem[(self._state & 0x03) - 1] + data
+            if len(elem[(self._state & 0x03) - 1]) > 16 * 1024:
+                raise ValueError('item exceeds maximum allowed size')
 
     def handle_data(self, data):
         self.handle_unicode_data(data.decode(self._encoding))
@@ -712,6 +714,7 @@ class RSS_Resource:
 
                     f = h.getfile()
                     bytes_received = 0
+                    bytes_processed = 0
                     xml_started = 0
 
                     l = f.read(4096)
@@ -721,11 +724,17 @@ class RSS_Resource:
                             if l:
                                 xml_started = 1
 
-                        rss_parser.feed(decoder.feed(l))
-
                         bytes_received = bytes_received + len(l)
                         if bytes_received > 48 * 1024:
-                            raise ValueError('file too large')
+                            raise ValueError('file exceeds maximum allowed size')
+
+                        data = decoder.feed(l)
+
+                        bytes_processed = bytes_processed + len(data)
+                        if bytes_processed > 96 * 1024:
+                            raise ValueError('file exceeds maximum allowed decompressed size')
+
+                        rss_parser.feed(data)
 
                         l = f.read(4096)
 
