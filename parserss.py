@@ -20,14 +20,23 @@ import codecs, gdbm, httplib, rfc822, os, random, re, socket, string, struct
 import sys, time, threading, traceback, zlib
 import xmllib
 
-# try to use timeoutsocket if it is available
-try:
-    import timeoutsocket
-    timeoutsocket.setDefaultSocketTimeout(60)
-    TimeoutException = timeoutsocket.Timeout
-except ImportError:
-    class TimeoutException(Exception):
-        pass
+
+SOCKET_CONNECTTIMEOUT = 200
+SOCKET_TIMEOUT = 60
+
+if hasattr(socket, 'setdefaulttimeout'):
+    # Python >= 2.3 has native support for socket timeouts
+    socket.setdefaulttimeout(SOCKET_CONNECTTIMEOUT)
+    TimeoutException = socket.timeout
+else:
+    # try to use timeoutsocket if it is available
+    try:
+        import timeoutsocket
+        timeoutsocket.setDefaultSocketTimeout(SOCKET_CONNECTTIMEOUT)
+        TimeoutException = timeoutsocket.Timeout
+    except ImportError:
+        class TimeoutException(Exception):
+            pass
 
 
 re_validprotocol = re.compile('^(?P<protocol>[a-z]+):(?P<rest>.*)$')
@@ -952,6 +961,13 @@ class RSS_Resource:
 
                 h = httplib.HTTP(host)
                 h.putrequest('GET', request)
+                # adjust the socket timeout after the connection has been
+                # established
+                if hasattr(h._conn.sock, 'settimeout'):
+                    h._conn.sock.settimeout(SOCKET_TIMEOUT)
+                elif hasattr(h._conn.sock, 'set_timeout'):
+                    h._conn.sock.set_timeout(SOCKET_TIMEOUT)
+
                 if not RSS_Resource.http_proxy:
                     h.putheader('Host', url_host)
                 h.putheader('Pragma', 'no-cache')
