@@ -673,7 +673,7 @@ class JabberUser:
             self._nr_headlines[-1] += len(new_items)
             items_size = reduce(lambda size, x: (size + len(x.title) +
                                                  len(x.link) +
-                                                 len(x.descr_plain)),
+                                                 (x.descr_plain!=None and len(x.descr_plain))),
                                 [0] + new_items)
             self._size_headlines[-1] += items_size
             self._commit_statistics(my_cursor)
@@ -1349,10 +1349,10 @@ class JabberSessionEventHandler:
 
             for item in items:
                 try:
-                    title, link, descr = (item.title, item.link, item.descr_plain)
+                    title, link = (item.title, item.link)
 
-                    if descr:
-                        description = descr
+                    if item.descr_plain:
+                        description = item.descr_plain
                     else:
                         description = title
 
