@@ -467,6 +467,9 @@ class Feed_Parser(xmllib.XMLParser):
             (self.rss_item_start, self.rss_item_end),
             'http://purl.org/rss/2.0/ item' :
             (self.rss_item_start, self.rss_item_end),
+            # not strictly conforming...
+            'item' :
+            (self.rss_item_start, self.rss_item_end),
 
             'http://my.netscape.com/rdf/simple/0.9/ title' :
             (self.rss_title_start, self.rss_title_end),
@@ -476,12 +479,18 @@ class Feed_Parser(xmllib.XMLParser):
             (self.rss_title_start, self.rss_title_end),
             'http://purl.org/rss/2.0/ title' :
             (self.rss_title_start, self.rss_title_end),
+            # not strictly conforming...
+            'title' :
+            (self.rss_title_start, self.rss_title_end),
 
             'http://my.netscape.com/rdf/simple/0.9/ link' :
             (self.rss_link_start, self.rss_link_end),
             'http://purl.org/rss/1.0/ link' :
             (self.rss_link_start, self.rss_link_end),
             'http://purl.org/rss/2.0/ link' :
+            (self.rss_link_start, self.rss_link_end),
+            # not strictly conforming...
+            'link' :
             (self.rss_link_start, self.rss_link_end),
 
             'http://my.netscape.com/rdf/simple/0.9/ description' :
@@ -491,6 +500,9 @@ class Feed_Parser(xmllib.XMLParser):
             'http://purl.org/rss/1.0/ description' :
             (self.rss_description_start, self.rss_description_end),
             'http://purl.org/rss/2.0/ description' :
+            (self.rss_description_start, self.rss_description_end),
+            # not strictly conforming...
+            'description' :
             (self.rss_description_start, self.rss_description_end)
             })
 
