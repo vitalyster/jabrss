@@ -366,76 +366,35 @@ ENTITIES = {
     }
 
 
-class RSS_Parser(xmllib.XMLParser):
+class Feed_Parser(xmllib.XMLParser):
     def __init__(self):
         xmllib.XMLParser.__init__(self, accept_utf8=1)
 
         self.elements = {
-            'channel' :
-            (self.channel_start, self.channel_end),
-            'http://my.netscape.com/rdf/simple/0.9/ channel' :
-            (self.channel_start, self.channel_end),
-            'http://my.netscape.com/publish/formats/rss-0.91.dtd channel' :
-            (self.channel_start, self.channel_end),
-            'http://purl.org/rss/1.0/ channel' :
-            (self.channel_start, self.channel_end),
-            'http://purl.org/rss/2.0/ channel' :
-            (self.channel_start, self.channel_end),
-
-            'item' :
-            (self.item_start, self.item_end),
-            'http://my.netscape.com/rdf/simple/0.9/ item' :
-            (self.item_start, self.item_end),
-            'http://my.netscape.com/publish/formats/rss-0.91.dtd item' :
-            (self.item_start, self.item_end),
-            'http://purl.org/rss/1.0/ item' :
-            (self.item_start, self.item_end),
-            'http://purl.org/rss/2.0/ item' :
-            (self.item_start, self.item_end),
-
-            'title' :
-            (self.title_start, self.title_end),
-            'http://my.netscape.com/rdf/simple/0.9/ title' :
-            (self.title_start, self.title_end),
-            'http://my.netscape.com/publish/formats/rss-0.91.dtd title' :
-            (self.title_start, self.title_end),
-            'http://purl.org/dc/elements/1.1/ title' :
-            (self.title_start, self.title_end),
-            'http://purl.org/rss/1.0/ title' :
-            (self.title_start, self.title_end),
-            'http://purl.org/rss/2.0/ title' :
-            (self.title_start, self.title_end),
-
-            'link' :
-            (self.link_start, self.link_end),
-            'http://my.netscape.com/rdf/simple/0.9/ link' :
-            (self.link_start, self.link_end),
-            'http://my.netscape.com/publish/formats/rss-0.91.dtd link' :
-            (self.link_start, self.link_end),
-            'http://purl.org/rss/1.0/ link' :
-            (self.link_start, self.link_end),
-            'http://purl.org/rss/2.0/ link' :
-            (self.link_start, self.link_end),
-
-            'description' :
-            (self.description_start, self.description_end),
-            'http://my.netscape.com/rdf/simple/0.9/ description' :
-            (self.description_start, self.description_end),
-            'http://my.netscape.com/publish/formats/rss-0.91.dtd description' :
-            (self.description_start, self.description_end),
-            'http://purl.org/dc/elements/1.1/ description' :
-            (self.description_start, self.description_end),
-            'http://purl.org/rss/1.0/ description' :
-            (self.description_start, self.description_end),
-            'http://purl.org/rss/2.0/ description' :
-            (self.description_start, self.description_end),
+            'http://www.w3.org/1999/02/22-rdf-syntax-ns# RDF' :
+            (self.rss_rdf_start, self.rss_rdf_end),
+            'rss' :
+            (self.rss_rss_start, self.rss_rss_end),
+            'http://backend.userland.com/rss2 rss' :
+            (self.rss_rss_start, self.rss_rss_end),
+            'http://my.netscape.com/rdf/simple/0.9/ rss' :
+            (self.rss_rss_start, self.rss_rss_end),
+            'http://purl.org/rss/1.0/ rss' :
+            (self.rss_rss_start, self.rss_rss_end),
+            'http://purl.org/rss/2.0/ rss' :
+            (self.rss_rss_start, self.rss_rss_end),
+            'http://purl.org/atom/ns# feed' :
+            (self.atom_feed_start, self.atom_feed_end)
             }
 
+        self._format = ''
         self._encoding = 'utf-8'
         self._feed_encoding = None
         self._bytes = 0
 
         self._state = 0
+        self._cdata = None
+        self._summary = None
 
         self._channel = ['', '', '']
         self._items = []
@@ -476,46 +435,284 @@ class RSS_Parser(xmllib.XMLParser):
         return xmllib.XMLParser.feed(self, data)
 
 
-    def channel_start(self, attrs):
+    def rss_rdf_start(self, attrs):
+        self._format = 'rdf'
+        self.elements.update({
+            'http://my.netscape.com/rdf/simple/0.9/ channel' :
+            (self.rss_channel_start, self.rss_channel_end),
+            'http://purl.org/rss/1.0/ channel' :
+            (self.rss_channel_start, self.rss_channel_end),
+            'http://purl.org/rss/2.0/ channel' :
+            (self.rss_channel_start, self.rss_channel_end),
+
+            'http://my.netscape.com/rdf/simple/0.9/ item' :
+            (self.rss_item_start, self.rss_item_end),
+            'http://purl.org/rss/1.0/ item' :
+            (self.rss_item_start, self.rss_item_end),
+            'http://purl.org/rss/2.0/ item' :
+            (self.rss_item_start, self.rss_item_end),
+
+            'http://my.netscape.com/rdf/simple/0.9/ title' :
+            (self.rss_title_start, self.rss_title_end),
+            'http://purl.org/dc/elements/1.1/ title' :
+            (self.rss_title_start, self.rss_title_end),
+            'http://purl.org/rss/1.0/ title' :
+            (self.rss_title_start, self.rss_title_end),
+            'http://purl.org/rss/2.0/ title' :
+            (self.rss_title_start, self.rss_title_end),
+
+            'http://my.netscape.com/rdf/simple/0.9/ link' :
+            (self.rss_link_start, self.rss_link_end),
+            'http://purl.org/rss/1.0/ link' :
+            (self.rss_link_start, self.rss_link_end),
+            'http://purl.org/rss/2.0/ link' :
+            (self.rss_link_start, self.rss_link_end),
+
+            'http://my.netscape.com/rdf/simple/0.9/ description' :
+            (self.rss_description_start, self.rss_description_end),
+            'http://purl.org/dc/elements/1.1/ description' :
+            (self.rss_description_start, self.rss_description_end),
+            'http://purl.org/rss/1.0/ description' :
+            (self.rss_description_start, self.rss_description_end),
+            'http://purl.org/rss/2.0/ description' :
+            (self.rss_description_start, self.rss_description_end)
+            })
+
+    def rss_rdf_end(self):
+        self.elements = {}
+
+
+    def rss_rss_start(self, attrs):
+        self._format = 'rss'
+        self.elements.update({
+            'channel' :
+            (self.rss_channel_start, self.rss_channel_end),
+            'http://backend.userland.com/rss2 channel' :
+            (self.rss_channel_start, self.rss_channel_end),
+            'http://my.netscape.com/publish/formats/rss-0.91.dtd channel' :
+            (self.rss_channel_start, self.rss_channel_end),
+            'http://purl.org/rss/1.0/ channel' :
+            (self.rss_channel_start, self.rss_channel_end),
+            'http://purl.org/rss/2.0/ channel' :
+            (self.rss_channel_start, self.rss_channel_end),
+
+            'item' :
+            (self.rss_item_start, self.rss_item_end),
+            'http://backend.userland.com/rss2 item' :
+            (self.rss_item_start, self.rss_item_end),
+            'http://my.netscape.com/publish/formats/rss-0.91.dtd item' :
+            (self.rss_item_start, self.rss_item_end),
+            'http://purl.org/rss/1.0/ item' :
+            (self.rss_item_start, self.rss_item_end),
+            'http://purl.org/rss/2.0/ item' :
+            (self.rss_item_start, self.rss_item_end),
+
+            'title' :
+            (self.rss_title_start, self.rss_title_end),
+            'http://backend.userland.com/rss2 title' :
+            (self.rss_title_start, self.rss_title_end),
+            'http://my.netscape.com/publish/formats/rss-0.91.dtd title' :
+            (self.rss_title_start, self.rss_title_end),
+            'http://purl.org/dc/elements/1.1/ title' :
+            (self.rss_title_start, self.rss_title_end),
+            'http://purl.org/rss/1.0/ title' :
+            (self.rss_title_start, self.rss_title_end),
+            'http://purl.org/rss/2.0/ title' :
+            (self.rss_title_start, self.rss_title_end),
+
+            'link' :
+            (self.rss_link_start, self.rss_link_end),
+            'http://backend.userland.com/rss2 link' :
+            (self.rss_link_start, self.rss_link_end),
+            'http://my.netscape.com/publish/formats/rss-0.91.dtd link' :
+            (self.rss_link_start, self.rss_link_end),
+            'http://purl.org/rss/1.0/ link' :
+            (self.rss_link_start, self.rss_link_end),
+            'http://purl.org/rss/2.0/ link' :
+            (self.rss_link_start, self.rss_link_end),
+
+            'description' :
+            (self.rss_description_start, self.rss_description_end),
+            'http://backend.userland.com/rss2 description' :
+            (self.rss_description_start, self.rss_description_end),
+            'http://my.netscape.com/publish/formats/rss-0.91.dtd description' :
+            (self.rss_description_start, self.rss_description_end),
+            'http://purl.org/dc/elements/1.1/ description' :
+            (self.rss_description_start, self.rss_description_end),
+            'http://purl.org/rss/1.0/ description' :
+            (self.rss_description_start, self.rss_description_end),
+            'http://purl.org/rss/2.0/ description' :
+            (self.rss_description_start, self.rss_description_end)
+            })
+
+    def rss_rss_end(self):
+        self.elements = {}
+
+
+    def atom_feed_start(self, attrs):
+        self._format = 'atom'
+        self.elements.update({
+            'http://purl.org/atom/ns# entry' :
+            (self.atom_entry_start, self.atom_entry_end),
+
+            'http://purl.org/atom/ns# title' :
+            (self.atom_title_start, self.atom_title_end),
+
+            'http://purl.org/atom/ns# link' :
+            (self.atom_link_start, self.atom_link_end),
+
+            'http://purl.org/atom/ns# tagline' :
+            (self.atom_tagline_start, self.atom_tagline_end),
+
+            'http://purl.org/atom/ns# summary' :
+            (self.atom_summary_start, self.atom_summary_end),
+
+            'http://purl.org/atom/ns# content' :
+            (self.atom_content_start, self.atom_content_end)
+            })
+
         self._state = self._state | 0x04
 
-    def channel_end(self):
+    def atom_feed_end(self):
+        self._state = self._state & ~0x04
+        self.elements = {}
+
+
+    def rss_channel_start(self, attrs):
+        self._state = self._state | 0x04
+
+    def rss_channel_end(self):
         self._state = self._state & ~0x04
 
 
-    def item_start(self, attrs):
+    def rss_item_start(self, attrs):
         self._state = self._state | 0x08
         self._items.append(['', '', ''])
 
-    def item_end(self):
+    def rss_item_end(self):
         self._state = self._state & ~0x08
 
 
-    def title_start(self, attrs):
+    def rss_title_start(self, attrs):
         if self._state & 0xfc:
-            self._state = (self._state & 0xfc) | 0x01
+            self._cdata = ''
 
-    def title_end(self):
-        self._state = self._state & 0xfc
-
-
-    def link_start(self, attrs):
+    def rss_title_end(self):
         if self._state & 0xfc:
-            self._state = (self._state & 0xfc) | 0x02
+            elem = self._current_elem()
+            if elem != None:
+                elem[0] = self._cdata
 
-    def link_end(self):
-        self._state = self._state & 0xfc
+        self._cdata = None
 
 
-    def description_start(self, attrs):
+    def rss_link_start(self, attrs):
         if self._state & 0xfc:
-            self._state = (self._state & 0xfc) | 0x03
+            self._cdata = ''
 
-    def description_end(self):
-        self._state = self._state & 0xfc
+    def rss_link_end(self):
+        if self._state & 0xfc:
+            elem = self._current_elem()
+            if elem != None:
+                elem[1] = self._cdata
+
+        self._cdata = None
+
+
+    def rss_description_start(self, attrs):
+        if self._state & 0xfc:
+            self._cdata = ''
+
+    def rss_description_end(self):
+        if self._state & 0xfc:
+            elem = self._current_elem()
+            if elem != None:
+                elem[2] = self._cdata
+
+        self._cdata = None
+
+
+    def atom_entry_start(self, attrs):
+        self._state = (self._state & ~0x04) | 0x08
+        self._items.append(['', '', ''])
+
+    def atom_entry_end(self):
+        if self._items[-1][2] == '' and self._summary:
+            self._items[-1][2] = self._summary
+
+        self._state = (self._state & ~0x08) | 0x04
+
+
+    def atom_title_start(self, attrs):
+        if self._state & 0xfc:
+            self._cdata = ''
+
+    def atom_title_end(self):
+        if self._state & 0xfc:
+            elem = self._current_elem()
+            if elem != None:
+                elem[0] = self._cdata
+
+        self._cdata = None
+
+
+    def atom_link_start(self, attrs):
+        elem = self._current_elem()
+        if elem == None:
+            return
+
+        if elem[1] and attrs.has_key('http://purl.org/atom/ns# type') and (attrs['http://purl.org/atom/ns# type'] != 'text/html'):
+            return
+
+        if attrs.has_key('http://purl.org/atom/ns# href'):
+            elem[1] = attrs['http://purl.org/atom/ns# href']
+
+    def atom_link_end(self):
+        pass
+
+
+    def atom_tagline_start(self, attrs):
+        if self._state & 0x04:
+            self._cdata = ''
+
+    def atom_tagline_end(self):
+        if self._state & 0x04:
+            elem = self._current_elem()
+            if elem != None:
+                elem[2] = self._cdata
+
+        self._cdata = None
+
+
+    def atom_content_start(self, attrs):
+        if self._state & 0x08:
+            self._cdata = ''
+
+    def atom_content_end(self):
+        if self._state & 0x08:
+            elem = self._current_elem()
+            if elem != None and elem != '':
+                elem[2] = self._cdata
+
+        self._cdata = None
+
+
+    def atom_summary_start(self, attrs):
+        if self._state & 0x08:
+            self._cdata = ''
+
+    def atom_summary_end(self):
+        if self._state & 0x08:
+            self._summary = self._cdata
+
+        self._cdata = None
 
 
     def unknown_starttag(self, tag, attrs):
+        if self._format == '':
+            print 'format not recognised, start-tag', tag.encode('iso8859-1', 'replace')
+            self._format = 'unknown'
+
         if tag[-8:] == ' channel':
             print 'unknown namespace for', tag.encode('iso8859-1', 'replace')
 	elif tag[-5:] == ' item':
@@ -532,16 +729,13 @@ class RSS_Parser(xmllib.XMLParser):
         pass
 
     def handle_unicode_data(self, data):
-        if self._state & 0x08:
-            elem = self._items[-1]
-        elif self._state & 0x04:
-            elem = self._channel
-        else:
+        elem = self._current_elem()
+        if elem == None:
             return
 
-        if self._state & 0x03:
-            elem[(self._state & 0x03) - 1] = elem[(self._state & 0x03) - 1] + data
-            if len(elem[(self._state & 0x03) - 1]) > 16 * 1024:
+        if self._cdata != None:
+            self._cdata += data
+            if len(self._cdata) > 16 * 1024:
                 raise ValueError('item exceeds maximum allowed size')
 
     def handle_data(self, data):
@@ -569,6 +763,14 @@ class RSS_Parser(xmllib.XMLParser):
             self.handle_unicode_data(ENTITIES[entity])
         except KeyError:
             print 'ignoring unknown entity ref', entity.encode('iso8859-1', 'replace')
+
+    def _current_elem(self):
+        if self._state & 0x08:
+            return self._items[-1]
+        elif self._state & 0x04:
+            return self._channel
+        else:
+            return None
 
 
 ##
@@ -753,7 +955,7 @@ class RSS_Resource:
                     else:
                         decoder = Null_Decompressor()
 
-                    rss_parser = RSS_Parser()
+                    rss_parser = Feed_Parser()
 
                     f = h.getfile()
                     bytes_received = 0
