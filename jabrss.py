@@ -320,6 +320,7 @@ class DataStorage:
             pass
         JabberUser._db_sync.release()
 
+        print 'user %s (id %d) deleted' % (user._jid.encode('iso8859-1', 'replace'), user._uid)
         self.evict_user(user)
 
 
@@ -392,6 +393,7 @@ class JabberUser:
             self._uid_str = struct.pack('>l', self._uid)
             JabberUser._db['U' + self._jid.encode('utf-8')] = self._uid_str + struct.pack('>l', self._configuration)
             JabberUser._db['S' + self._uid_str] = self._jid.encode('utf-8')
+            print 'user %s (id %d) created' % (self._jid.encode('iso8859-1', 'replace'), self._uid)
 
         self._res_ids = []
         try:
@@ -921,7 +923,7 @@ class JabberSessionEventHandler:
         item.putAttrib('jid', jid)
         item.putAttrib('subscription', 'remove')
 
-        print 'sending remove request', jid.encode('iso8859-1', 'replace')
+        #print 'sending remove request', jid.encode('iso8859-1', 'replace')
         self._jab_session.sendPacket(iq)
 
     # delete all user information from database and evict user
@@ -930,6 +932,7 @@ class JabberSessionEventHandler:
             user, jid_resource = storage.get_new_user(jid,
                                                       jabIPresence.stOffline)
 
+            print 'deleting user\'s %s subscriptions: %s', (jid.encode('iso8859-1', 'replace'), repr(user.resources()))
             for res_id in user.resources():
                 resource = storage.get_resource_by_id(res_id)
                 user.remove_resource(resource)
