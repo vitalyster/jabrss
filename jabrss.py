@@ -21,6 +21,7 @@ import traceback
 import xpcom.components
 
 from parserss import RSS_Resource, RSS_Resource_id2url, RSS_Resource_simplify
+from parserss import UrlError
 
 
 TEXT_WELCOME = 'Welcome to jabrss. Please note that this service is still in BETA and that the current privacy policy is quite simple: all your data are belong to me and might be sold to your favorite spammer. :-) For more information, please visit the jabrss Web site at http://JabXPCOM.sunsite.dk/jabrss/'
@@ -810,6 +811,9 @@ class JabberSessionEventHandler:
 
                 print user.jid().encode('iso8859-1', 'replace'), 'subscribed to', url
                 reply = message.reply('You have been subscribed to %s' % (url,))
+            except UrlError, url_error:
+                print user.jid().encode('iso8859-1', 'replace'), 'error (%s) subscribing to' % (url_error.args[0],), url
+                reply = message.reply('Error (%s) subscribing to %s' % (url_error.args[0], url))
             except ValueError:
                 print user.jid().encode('iso8859-1', 'replace'), 'already subscribed to', url
                 reply = message.reply('You are already subscribed to %s' % (url,))
