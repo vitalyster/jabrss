@@ -1327,11 +1327,12 @@ class JabberSessionEventHandler:
                     print 'exception caught updating', resource.url()
                     traceback.print_exc(file=sys.stdout)
 
-                resource.unlock(); need_unlock = 0
+                if need_unlock:
+                    resource.unlock(); need_unlock = 0
                 self.schedule_update(resource)
         finally:
             if need_unlock:
-                resource.unlock()
+                resource.unlock(); need_unlock = 0
 
 
 # register event handlers
