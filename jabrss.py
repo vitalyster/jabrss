@@ -118,6 +118,8 @@ event_queue_service.createThreadEventQueue()
 event_queue = event_queue_service.getSpecialEventQueue(event_queue_service.CURRENT_THREAD_EVENT_QUEUE)
 event_queue.init(0)
 
+main_thread = xpcom.components.classes['@mozilla.org/thread;1'].createInstance(xpcom.components.interfaces.nsIThread).currentThread
+
 
 # get a proxy object manager
 proxy_object_manager = xpcom.components.classes['@mozilla.org/xpcomproxy;1'].getService(xpcom.components.interfaces.nsIProxyObjectManager)
@@ -1504,27 +1506,8 @@ def console_handler(jab_session_proxy):
     while event_handler._connected or (event_handler._shutdown < 2):
         time.sleep(1)
 
-    try:
-        storage._res_uids_db.close()
-    except:
-        print 'error closing DataStorage db'
-        traceback.print_exc(file=sys.stdout)
-
-    try:
-        JabberUser._db.close()
-    except:
-        print 'error closing JabberUser db'
-        traceback.print_exc(file=sys.stdout)
-
-    try:
-        RSS_Resource._db.close()
-    except:
-        print 'error closing RSS db'
-        traceback.print_exc(file=sys.stdout)
-
-    print 'JabRSS shutdown complete'
-    time.sleep(1)
-    sys.exit(0)
+    print 'shutting down event loop'
+    main_thread.interrupt()
 
 
 wait_and_reconnect(jab_session, event_queue, 0)
@@ -1536,3 +1519,24 @@ thread.start_new_thread(console_handler, (jab_session_proxy,))
 
 
 event_queue.eventLoop()
+
+
+try:
+    storage._res_uids_db.close()
+except:
+    print 'error closing DataStorage db'
+    traceback.print_exc(file=sys.stdout)
+
+try:
+    JabberUser._db.close()
+except:
+    print 'error closing JabberUser db'
+    traceback.print_exc(file=sys.stdout)
+
+try:
+    RSS_Resource._db.close()
+except:
+    print 'error closing RSS db'
+    traceback.print_exc(file=sys.stdout)
+
+print 'JabRSS shutdown complete'
