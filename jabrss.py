@@ -254,7 +254,8 @@ class DataStorage:
                 self._res_uids_db_updates += 1
             self._res_uids_db_sync.release()
         except ValueError:
-            pass
+            print 'ValueError: remove_resource_user(%d), %s' % (resource.id(),
+                                                                repr(res_uids))
 
 
     # @throws KeyError
@@ -1110,6 +1111,7 @@ class JabberSessionEventHandler:
             traceback.print_exc(file=sys.stdout)
 
     def onUnknownPacket(self, tag):
+        # TODO: close connection
         print 'unknownPacket', tag.toXML().encode('iso8859-1', 'replace')
 
     def onIqVersion(self):
