@@ -218,8 +218,11 @@ class DataStorage:
         redirect_resource = self.get_resource(redirect_url,
                                               RSS_Resource_Cursor(db))
         # prevent resource from being evicted until redirect is processed
-        dummy_user.add_resource(redirect_resource, None,
-                                Cursor(self._redirect_db))
+        try:
+            dummy_user.add_resource(redirect_resource, None,
+                                    Cursor(self._redirect_db))
+        except ValueError:
+            pass
         redirect_resource.unlock()
 
         new_items, next_item_id, redirect_target, redirect_seq, redirects = redirect_resource.update(db, redirect_count)
@@ -227,10 +230,13 @@ class DataStorage:
         if len(new_items) > 0:
             redirect_resource.unlock()
             redirects.insert(0, (redirect_resource, new_items, next_item_id))
-        elif redirect_target != None:
+        elif (redirect_target != None) or (redirect_resource._invalid_since):
             redirect_resource.lock()
-            dummy_user.remove_user(redirect_resource,
-                                   Cursor(self._redirect_db))
+            try:
+                dummy_user.remove_resource(redirect_resource,
+                                           Cursor(self._redirect_db))
+            except ValueError:
+                pass
             redirect_resource.unlock()
 
         if redirect_target != None:
