@@ -1068,8 +1068,8 @@ class RSS_Resource:
 
                     try:
                         self._last_modified = rfc822.mktime_tz(rfc822.parsedate_tz(headers['last-modified']))
-                    except KeyError:
-                        pass
+                    except:
+                        self._last_modified = 0
 
                     # RSS resource is valid
                     self._invalid_since = 0
