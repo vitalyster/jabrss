@@ -17,7 +17,7 @@
 # USA
 
 import codecs, httplib, md5, rfc822, os, random, re, socket, string, struct
-import sys, time, threading, traceback, types, xmllib, zlib
+import sys, time, thread, traceback, types, xmllib, zlib
 import apsw
 
 try:
@@ -183,12 +183,38 @@ def compare_items(l, r):
         return 0
 
 
-class Resource_Guard:
-    def __init__(self, cleanup_handler):
-        self._cleanup_handler = cleanup_handler
+class Cursor:
+    def __init__(self, _db=None):
+        self._txn = False
+
+        if _db == None:
+            self._cursor = db.cursor()
+        else:
+            self._cursor = _db.cursor()
+
+        RSS_Resource._db_sync.acquire()
 
     def __del__(self):
-        self._cleanup_handler()
+        if self._txn:
+            self._cursor.execute('END')
+
+        RSS_Resource._db_sync.release()
+
+
+    def begin(self):
+        self._cursor.execute('BEGIN')
+        self._txn = True
+
+    def execute(self, stmt, bindings=None):
+        if bindings == None:
+            return self._cursor.execute(stmt)
+        else:
+            return self._cursor.execute(stmt, bindings)
+
+    def getdb(self):
+        return self._cursor.getconnection()
+
+RSS_Resource_Cursor = Cursor
 
 class Data:
     def __init__(self, **kw):
@@ -1023,20 +1049,16 @@ class RSS_Resource:
     NR_ITEMS = 48
 
     _db = RSS_Resource_db()
+    _db_sync = thread.allocate_lock()
+
     _redirect_cb = None
     http_proxy = None
 
 
     def __init__(self, url, db_cursor=None):
-        self._lock = threading.Lock()
+        self._lock = thread.allocate_lock()
         self._url = url
         self._url_protocol, self._url_host, self._url_path = split_url(url)
-
-        if db_cursor == None:
-            cursor = RSS_Resource._db.cursor()
-        else:
-            cursor = db_cursor
-        db = cursor.getconnection()
 
         self._id = None
         self._last_updated, self._last_modified = None, None
@@ -1046,9 +1068,15 @@ class RSS_Resource:
         self._penalty = 0
         title, description, link = None, None, None
 
-        cursor.execute('SELECT rid, last_updated, last_modified, etag, invalid_since, redirect, redirect_seq, penalty, err_info, title, description, link FROM resource WHERE url=?',
+        if db_cursor == None:
+            cursor = Cursor(RSS_Resource._db)
+        else:
+            cursor = db_cursor
+        db = cursor.getdb()
+
+        result = cursor.execute('SELECT rid, last_updated, last_modified, etag, invalid_since, redirect, redirect_seq, penalty, err_info, title, description, link FROM resource WHERE url=?',
                        (self._url,))
-        for row in cursor:
+        for row in result:
             self._id, self._last_updated, self._last_modified, self._etag, self._invalid_since, self._redirect, self._redirect_seq, self._penalty, self._err_info, title, description, link = row
 
         if self._id == None:
@@ -1072,12 +1100,14 @@ class RSS_Resource:
         self._channel_info = Data(title=title, link=link, descr=description)
 
         self._history = []
-        cursor.execute('SELECT time_items0, time_items1, time_items2, time_items3, time_items4, time_items5, time_items6, time_items7, time_items8, time_items9, time_items10, time_items11, time_items12, time_items13, time_items14, time_items15, nr_items0, nr_items1, nr_items2, nr_items3, nr_items4, nr_items5, nr_items6, nr_items7, nr_items8, nr_items9, nr_items10, nr_items11, nr_items12, nr_items13, nr_items14, nr_items15 FROM resource_history WHERE rid=?',
+        result = cursor.execute('SELECT time_items0, time_items1, time_items2, time_items3, time_items4, time_items5, time_items6, time_items7, time_items8, time_items9, time_items10, time_items11, time_items12, time_items13, time_items14, time_items15, nr_items0, nr_items1, nr_items2, nr_items3, nr_items4, nr_items5, nr_items6, nr_items7, nr_items8, nr_items9, nr_items10, nr_items11, nr_items12, nr_items13, nr_items14, nr_items15 FROM resource_history WHERE rid=?',
                        (self._id,))
-        for row in cursor:
+        for row in result:
             history_times = filter(lambda x: x!=None, row[0:16])
             history_nr = filter(lambda x: x!=None, row[16:32])
             self._history = zip(history_times, history_nr)
+
+        del cursor
 
 
     def lock(self):
@@ -1108,16 +1138,17 @@ class RSS_Resource:
             return None, None
 
         if db_cursor == None:
-            cursor = RSS_Resource._db.cursor()
+            cursor = Cursor(RSS_Resource._db)
         else:
             cursor= db_cursor
 
-        cursor.execute('SELECT url FROM resource WHERE rid=?',
+        result = cursor.execute('SELECT url FROM resource WHERE rid=?',
                        (self._redirect,))
         redirect_url = None
-        for row in cursor:
+        for row in result:
             redirect_url = row[0]
 
+        del cursor
         return redirect_url, self._redirect_seq
 
     def penalty(self):
@@ -1158,8 +1189,7 @@ class RSS_Resource:
         if db == None:
             db = RSS_Resource_db()
 
-        cursor = db.cursor()
-        db_txn_end = None
+        cursor = None
 
         redirect_penalty = 0
         redirect_tries = redirect_count
@@ -1182,7 +1212,7 @@ class RSS_Resource:
                     if redirect_url != self._url:
                         #print 'redirect: %s -> %s' % (self._url.encode('iso8859-1', 'replace'), redirect_url.encode('iso8859-1', 'replace'))
                         if RSS_Resource._redirect_cb:
-                            redirect_resource, redirects = RSS_Resource._redirect_cb(redirect_url, cursor, -redirect_tries + 1)
+                            redirect_resource, redirects = RSS_Resource._redirect_cb(redirect_url, db, -redirect_tries + 1)
 
                             # only perform the redirect if target is valid
                             if redirect_resource._invalid_since:
@@ -1191,10 +1221,10 @@ class RSS_Resource:
                                 self._etag = redirect_resource._etag
                                 redirect_resource = None
                             else:
+                                cursor = Cursor(db)
                                 redirect_items, redirect_seq = redirect_resource.get_headlines(0, cursor)
 
-                                cursor.execute('BEGIN')
-                                db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
+                                cursor.begin()
 
                                 items, first_item_id, nr_new_items = self._process_new_items(redirect_items, cursor)
                                 del redirect_items
@@ -1343,8 +1373,8 @@ class RSS_Resource:
                     rss_parser.close()
                     new_channel_info = normalize_obj(rss_parser._channel)
 
-                    cursor.execute('BEGIN')
-                    db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
+                    cursor = Cursor(db)
+                    cursor.begin()
 
                     hash_buffer = buffer(file_hash.digest())
                     cursor.execute('UPDATE resource SET hash=? WHERE rid=? AND (hash IS NULL OR hash<>?)',
@@ -1411,6 +1441,12 @@ class RSS_Resource:
             error_info = 'timeout: ' + str(e)
         except socket.error, e:
             error_info = 'socket: ' + str(e)
+        except httplib.BadStatusLine, e:
+            error_info = 'HTTP: bad status line'
+        except httplib.IncompleteRead, e:
+            error_info = 'HTTP: incomplete read'
+        except httplib.UnknownProtocol, e:
+            error_info = 'HTTP: unknown protocol'
         except httplib.HTTPException, e:
             error_info = 'HTTP: ' + str(e)
         except DecompressorError, e:
@@ -1429,9 +1465,9 @@ class RSS_Resource:
         if error_info:
             print 'Error: %s' % (error_info,)
 
-        if db_txn_end == None:
-            cursor.execute('BEGIN')
-            db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
+        if cursor == None:
+            cursor = Cursor(db)
+            cursor.begin()
 
         if error_info != self._err_info:
             self._err_info = error_info
@@ -1461,6 +1497,7 @@ class RSS_Resource:
         cursor.execute('UPDATE resource SET last_modified=?, last_updated=?, etag=?, invalid_since=?, penalty=? WHERE rid=?',
                        (self._last_modified, self._last_updated, self._etag,
                         self._invalid_since, self._penalty, self._id))
+        del cursor
 
         if nr_new_items:
             new_items = items[-nr_new_items:]
@@ -1553,24 +1590,25 @@ class RSS_Resource:
     # @return ([item], next id)
     def get_headlines(self, first_id, db_cursor=None):
         if db_cursor == None:
-            cursor = RSS_Resource._db.cursor()
+            cursor = Cursor(RSS_Resource._db)
         else:
             cursor = db_cursor
 
         if first_id == None:
             first_id = 0
 
-        cursor.execute('SELECT seq_nr, published, title, link, descr_plain, descr_xhtml FROM resource_data WHERE rid=? AND seq_nr>=? ORDER BY seq_nr',
-                       (self._id, first_id))
+        result = cursor.execute('SELECT seq_nr, published, title, link, descr_plain, descr_xhtml FROM resource_data WHERE rid=? AND seq_nr>=? ORDER BY seq_nr',
+                                (self._id, first_id))
         items = []
         last_id = first_id
-        for seq_nr, published, title, link, descr_plain, descr_xhtml in cursor:
+        for seq_nr, published, title, link, descr_plain, descr_xhtml in result:
             if seq_nr >= last_id:
                 last_id = seq_nr + 1
             items.append(Data(published=published, title=title, link=link,
                               descr_plain=descr_plain,
                               descr_xhtml=descr_xhtml))
 
+        del cursor
         return items, last_id
 
 
@@ -1633,16 +1671,17 @@ class RSS_Resource:
 
 def RSS_Resource_id2url(res_id, db_cursor=None):
     if db_cursor == None:
-        cursor = RSS_Resource._db.cursor()
+        cursor = Cursor(RSS_Resource._db)
     else:
         cursor = db_cursor
 
     url = None
-    cursor.execute('SELECT url FROM resource WHERE rid=?',
-                   (res_id,))
-    for row in cursor:
+    result = cursor.execute('SELECT url FROM resource WHERE rid=?',
+                            (res_id,))
+    for row in result:
         url = row[0]
 
+    del cursor
     if url == None:
         raise KeyError(res_id)
 

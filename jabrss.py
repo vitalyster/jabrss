@@ -22,7 +22,7 @@ import apsw
 import xpcom.components
 
 from parserss import RSS_Resource, RSS_Resource_id2url, RSS_Resource_simplify
-from parserss import RSS_Resource_db
+from parserss import RSS_Resource_db, RSS_Resource_Cursor
 from parserss import UrlError
 
 
@@ -161,34 +161,67 @@ class Resource_Guard:
     def __del__(self):
         self._cleanup_handler()
 
-
 def get_db():
     db = apsw.Connection('jabrss.db')
     db.setbusytimeout(3000)
     return db
 
+class Cursor:
+    def __init__(self, _db=None):
+        self._txn = False
+
+        if _db == None:
+            self._cursor = db.cursor()
+        else:
+            self._cursor = _db.cursor()
+
+        db_sync.acquire()
+
+    def __del__(self):
+        if self._txn:
+            self._cursor.execute('END')
+
+        db_sync.release()
+
+
+    def begin(self):
+        self._cursor.execute('BEGIN')
+        self._txn = True
+
+    def execute(self, stmt, bindings=None):
+        if bindings == None:
+            return self._cursor.execute(stmt)
+        else:
+            return self._cursor.execute(stmt, bindings)
+
+    def next(self):
+        return self._cursor.next()
+
+
 db = get_db()
+db_sync = thread.allocate_lock()
 
 
 class DataStorage:
     def __init__(self):
         self._users = {}
-        self._users_sync = threading.Lock()
+        self._users_sync = thread.allocate_lock()
         self._resources = {}
         self._res_uids = {}
-        self._resources_sync = threading.Lock()
+        self._resources_sync = thread.allocate_lock()
 
         self._redirect_db = None
 
 
-    def _redirect_cb(self, redirect_url, cursor, redirect_count):
-        redirect_resource = self.get_resource(redirect_url, cursor)
+    def _redirect_cb(self, redirect_url, db, redirect_count):
+        redirect_resource = self.get_resource(redirect_url,
+                                              RSS_Resource_Cursor(db))
         # prevent resource from being evicted until redirect is processed
         dummy_user.add_resource(redirect_resource, None,
-                                self._redirect_db.cursor())
+                                Cursor(self._redirect_db))
         redirect_resource.unlock()
 
-        new_items, next_item_id, redirect_target, redirect_seq, redirects = redirect_resource.update(cursor.getconnection(), redirect_count)
+        new_items, next_item_id, redirect_target, redirect_seq, redirects = redirect_resource.update(db, redirect_count)
 
         if len(new_items) > 0:
             redirect_resource.unlock()
@@ -196,7 +229,7 @@ class DataStorage:
         elif redirect_target != None:
             redirect_resource.lock()
             dummy_user.remove_user(redirect_resource,
-                                   self._redirect_db.cursor())
+                                   Cursor(self._redirect_db))
             redirect_resource.unlock()
 
         if redirect_target != None:
@@ -303,13 +336,13 @@ class DataStorage:
             res_uids = []
 
             if db_cursor == None:
-                cursor = db.cursor()
+                cursor = Cursor(db)
             else:
                 cursor = db_cursor
 
-            cursor.execute('SELECT uid FROM user_resource WHERE rid=?',
-                           (res_id,))
-            for row in cursor:
+            result = cursor.execute('SELECT uid FROM user_resource WHERE rid=?',
+                                    (res_id,))
+            for row in result:
                 res_uids.append(row[0])
 
             self._res_uids[res_id] = res_uids
@@ -387,9 +420,8 @@ class DataStorage:
 
 
     def remove_user(self, user):
-        cursor = db.cursor()
-        cursor.execute('BEGIN')
-        db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
+        cursor = Cursor(db)
+        cursor.begin()
 
         try:
             cursor.execute('DELETE FROM user_stat WHERE uid=?',
@@ -399,7 +431,7 @@ class DataStorage:
             cursor.execute('DELETE FROM user WHERE uid=?',
                            (user.uid(),))
         finally:
-            del db_txn_end
+            del cursor
 
         print 'user %s (id %d) deleted' % (user._jid.encode('iso8859-1', 'replace'), user._uid)
         self.evict_user(user)
@@ -447,7 +479,7 @@ class JabberUser:
         self._store_messages = 16
         self._size_limit = None
 
-        cursor = db.cursor()
+        cursor = Cursor(db)
 
         try:
             cursor.execute('SELECT uid, conf, store_messages, size_limit FROM user WHERE jid=?',
@@ -465,22 +497,23 @@ class JabberUser:
 
 
         self._res_ids = []
-        cursor.execute('SELECT rid FROM user_resource WHERE uid=?',
-                       (self._uid,))
-        for row in cursor:
+        result = cursor.execute('SELECT rid FROM user_resource WHERE uid=?',
+                                (self._uid,))
+        for row in result:
             self._res_ids.append(row[0])
 
         self._stat_start = 0
         self._nr_headlines = []
         self._size_headlines = []
 
-        cursor.execute('SELECT start, nr_msgs0, nr_msgs1, nr_msgs2, nr_msgs3, nr_msgs4, nr_msgs5, nr_msgs6, nr_msgs7, size_msgs0, size_msgs1, size_msgs2, size_msgs3, size_msgs4, size_msgs5, size_msgs6, size_msgs7 FROM user_stat WHERE uid=?',
+        result = cursor.execute('SELECT start, nr_msgs0, nr_msgs1, nr_msgs2, nr_msgs3, nr_msgs4, nr_msgs5, nr_msgs6, nr_msgs7, size_msgs0, size_msgs1, size_msgs2, size_msgs3, size_msgs4, size_msgs5, size_msgs6, size_msgs7 FROM user_stat WHERE uid=?',
                        (self._uid,))
-        for row in cursor:
+        for row in result:
             self._stat_start = row[0]
             self._nr_headlines = list(row[1:9])
             self._size_headlines = list(row[9:17])
 
+        del cursor
         self._adjust_statistics()
 
 
@@ -504,12 +537,14 @@ class JabberUser:
 
     def _commit_statistics(self, db_cursor=None):
         if db_cursor == None:
-            cursor = db.cursor()
+            cursor = Cursor(db)
         else:
             cursor = db_cursor
 
         cursor.execute('INSERT INTO user_stat (uid, start, nr_msgs0, nr_msgs1, nr_msgs2, nr_msgs3, nr_msgs4, nr_msgs5, nr_msgs6, nr_msgs7, size_msgs0, size_msgs1, size_msgs2, size_msgs3, size_msgs4, size_msgs5, size_msgs6, size_msgs7) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                           tuple([self._uid, self._stat_start] + self._nr_headlines + self._size_headlines))
+
+        del cursor
 
 
     def uid(self):
@@ -581,9 +616,10 @@ class JabberUser:
         
 
     def _update_configuration(self):
-        cursor = db.cursor()
+        cursor = Cursor(db)
         cursor.execute('UPDATE user SET conf=?, store_messages=?, size_limit=? WHERE uid=?',
                        (self._configuration, self._store_messages, self._size_limit / 16, self._uid))
+        del cursor
 
     def set_configuration(self, conf, store_messages, size_limit):
         self._configuration = conf
@@ -667,12 +703,13 @@ class JabberUser:
             del resources_unlocker
 
             if db_cursor == None:
-                cursor = db.cursor()
+                cursor = Cursor(db)
             else:
                 cursor = db_cursor
 
             cursor.execute('INSERT INTO user_resource (uid, rid, seq_nr) VALUES (?, ?, ?)',
                            (self._uid, res_id, seq_nr))
+            del cursor
         else:
             raise ValueError(res_id)
 
@@ -696,25 +733,27 @@ class JabberUser:
             storage.evict_resource(resource)
 
         if db_cursor == None:
-            cursor = db.cursor()
+            cursor = Cursor(db)
         else:
             cursor = db_cursor
 
         cursor.execute('DELETE FROM user_resource WHERE uid=? AND rid=?',
                        (self._uid, res_id))
+        del cursor
 
     def headline_id(self, resource, db_cursor=None):
         if db_cursor == None:
-            cursor = db.cursor()
+            cursor = Cursor(db)
         else:
             cursor = db_cursor
 
-        cursor.execute('SELECT seq_nr FROM user_resource WHERE uid=? AND rid=?',
-                       (self._uid, resource.id()))
+        result = cursor.execute('SELECT seq_nr FROM user_resource WHERE uid=? AND rid=?',
+                                (self._uid, resource.id()))
 
         headline_id = None
-        for row in cursor:
+        for row in result:
             headline_id = row[0]
+        del cursor
 
         if headline_id == None:
             headline_id = 0
@@ -724,11 +763,9 @@ class JabberUser:
 
     def update_headline(self, resource, headline_id, new_items=[],
                         db_cursor=None):
-        db_txn_end = None
         if db_cursor == None:
-            cursor = db.cursor()
-            cursor.execute('BEGIN')
-            db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
+            cursor = Cursor(db)
+            cursor.begin()
         else:
             cursor = db_cursor
 
@@ -747,7 +784,7 @@ class JabberUser:
                 self._commit_statistics(cursor)
 
         finally:
-            del db_txn_end
+            del cursor
 
 
 class DummyJabberUser(JabberUser):
@@ -970,20 +1007,23 @@ class JabberSessionEventHandler:
 
 
     def _process_statistics(self, message, user):
-        cursor = db.cursor()
+        cursor = Cursor(db)
         reply_body = ['Statistics:']
 
-        cursor.execute('SELECT count(uid) FROM user')
+        try:
+            result = cursor.execute('SELECT count(uid) FROM user')
 
-        total_users = 0
-        for row in cursor:
-            total_users = row[0]
+            total_users = 0
+            for row in result:
+                total_users = row[0]
 
-        cursor.execute('SELECT count(rid) FROM (SELECT DISTINCT rid FROM user_resource)')
+            result = cursor.execute('SELECT count(rid) FROM (SELECT DISTINCT rid FROM user_resource)')
 
-        total_resources = 0
-        for row in cursor:
-            total_resources = row[0]
+            total_resources = 0
+            for row in result:
+                total_resources = row[0]
+        finally:
+            del cursor
 
         reply_body.append('Users online/total: %d/%d' %
                           (len(storage._users) / 2, total_users))
@@ -1273,13 +1313,15 @@ class JabberSessionEventHandler:
                         print 'subscription for user "%s" is "%s" (!= "both")' % (jid.encode('iso8859-1', 'replace'), subscription.encode('iso8859-1', 'replace'))
                         self._remove_user(jid)
 
-                cursor = db.cursor()
-                cursor.execute('SELECT jid FROM user')
+                cursor = Cursor(db)
+                result = cursor.execute('SELECT jid FROM user')
                 delete_users = []
-                for row in cursor:
+                for row in result:
                     username = row[0]
                     if not subscribers.has_key(username):
                         delete_users.append(username)
+
+                del cursor
 
                 for username in delete_users:
                     print 'user "%s" in database, but not subscribed to the service' % (username.encode('iso8859-1', 'replace'),)
@@ -1607,8 +1649,7 @@ class JabberSessionEventHandler:
         if redirect_url != None:
             return
 
-        cursor = db.cursor()
-        db_txn_end = None
+        cursor = Cursor(db)
         users_unlocker = None
         redirect_resource = None
         redirects = []
@@ -1616,6 +1657,7 @@ class JabberSessionEventHandler:
         resource.lock(); need_unlock = True
         try:
             uids = storage.get_resource_uids(resource, cursor)
+            cursor = None
 
             users_unlocker = storage.users_lock()
             used = False
@@ -1644,9 +1686,9 @@ class JabberSessionEventHandler:
 
                     if len(new_items) > 0 or redirect_resource != None:
                         deliver_users = []
+                        cursor = Cursor(db)
                         uids = storage.get_resource_uids(resource, cursor)
-                        cursor.execute('BEGIN')
-                        db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
+                        cursor.begin()
                         for uid in uids:
                             try:
                                 user = storage.get_user_by_id(uid)
@@ -1696,7 +1738,7 @@ class JabberSessionEventHandler:
                         # prevent deadlock (the main thread, which is
                         # needed for sending, might be blocked waiting
                         # to acquire resource)
-                        db_txn_end = None
+                        cursor = None
                         if need_unlock:
                             resource.unlock(); need_unlock = False
 
@@ -1712,7 +1754,7 @@ class JabberSessionEventHandler:
                 if redirect_resource == None:
                     self.schedule_update(resource)
         finally:
-            db_txn_end = None
+            cursor = None
             users_unlocker = None
             if need_unlock:
                 resource.unlock(); need_unlock = False
@@ -1720,8 +1762,8 @@ class JabberSessionEventHandler:
         for resource, new_items, next_item_id in redirects:
             deliver_users = []
 
-            cursor.execute('BEGIN')
-            db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
+            cursor = Cursor(db)
+            cursor.begin()
             resource.lock(); need_unlock = True
             try:
                 print 'processing updated resource', resource.url()
@@ -1748,7 +1790,7 @@ class JabberSessionEventHandler:
                         pass
 
             finally:
-                db_txn_end = None
+                cursor = None
                 if need_unlock:
                     resource.unlock(); need_unlock = False
 
