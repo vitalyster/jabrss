@@ -935,6 +935,7 @@ class JabberSessionEventHandler:
 
     def onAuthError(self, code, data):
         print 'authError', code, data.encode('iso8859-1', 'replace')
+        self._connected = 0
         self._jab_session.disconnect()
 
     def onIq(self, tag):
@@ -1284,6 +1285,7 @@ def wait_and_reconnect(jab_session, event_queue, timespan):
             jab_session.outputStream = tcp_stream
 
             print 'establishing Jabber session...'
+            event_handler._connected = -1
             jab_session.connect(JABBER_SERVER, jabISession.atAutoAuth,
                                 JABBER_USER, 'jabxpcom', JABBER_PASSWORD, 0)
             return
