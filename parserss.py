@@ -43,34 +43,37 @@ re_spliturl = re.compile('^(?P<protocol>[a-z]+)://(?P<host>[^/]+)(?P<path>/?.*)$
 random.seed()
 
 
+class UrlError(ValueError):
+    pass
+
 def split_url(url):
     mo = re_validprotocol.match(url)
     if not mo:
-        raise 'can\'t parse protocol of URL "%s"' % (url,)
+        raise UrlError('can\'t parse protocol of URL "%s"' % (url,))
 
     url_protocol, url_rest = mo.group('protocol', 'rest')
     if not re_supportedprotocol.match(url_protocol):
-        raise 'unsupported protocol "%s"' % (url_protocol)
+        raise UrlError('unsupported protocol "%s"' % (url_protocol))
 
     if url_rest[:2] != '//':
-        raise 'missing "//" after "%s:"' % (url_protocol,)
+        raise UrlError('missing "//" after "%s:"' % (url_protocol,))
 
     url_rest = url_rest[2:]
     mo = re_validhost.match(url_rest)
     if not mo:
-        raise 'invalid host in URL "%s"' % (url,)
+        raise UrlError('invalid host in URL "%s"' % (url,))
 
     url_host, url_port, url_path = mo.group('host', 'port', 'path')
 
     url_host = url_host.lower()
     if (url_port != '80') and (url_port != 'http') and (url_port != None):
-        raise 'ports != 80 not allowed'
+        raise UrlError('ports != 80 not allowed')
 
     if url_path == '':
         url_path = '/'
 
     if re_blockhost.match(url_host):
-        raise 'host "%s" not allowed' % (url_host,)
+        raise UrlError('host "%s" not allowed' % (url_host,))
 
     return (url_protocol, url_host, url_path)
 
@@ -128,6 +131,9 @@ def compare_items(l, r):
         return 0
 
 
+class DecompressorError(ValueError):
+    pass
+
 class Null_Decompressor:
     def feed(self, s):
         return s
@@ -167,7 +173,7 @@ class Gzip_Decompressor:
 
     def flush(self):
         res = None
-        while res == None:
+        while (res == None) and self._state_feed:
             res = self._state_feed(self)
 
             if res:
@@ -252,9 +258,9 @@ class Gzip_Decompressor:
         if len(self._buffer) >= 8:
             crc32, isize = struct.unpack("<ll", self._buffer[:8])
             if crc32 % 0x100000000L != self._crc % 0x100000000L:
-                raise ValueError, "CRC check failed"
+                raise DecompressorError('CRC check failed')
             elif isize != self._size:
-                raise ValueError, "Incorrect length of data produced"
+                raise DecompressorError('Incorrect length of data produced')
 
             self._state_feed = None
         return ''
@@ -483,16 +489,16 @@ class RSS_Parser(xmllib.XMLParser):
 
     def unknown_starttag(self, tag, attrs):
         if tag[-8:] == ' channel':
-            print 'unknown namespace for', tag
+            print 'unknown namespace for', tag.encode('iso8859-1', 'replace')
 	elif tag[-5:] == ' item':
-            print 'unknown namespace for', tag
+            print 'unknown namespace for', tag.encode('iso8859-1', 'replace')
         elif self._state & 0xfc:
             if tag[-6:] == ' title':
-                print 'unknown namespace for', tag
+                print 'unknown namespace for', tag.encode('iso8859-1', 'replace')
 	    elif tag[-5:] == ' link':
-                print 'unknown namespace for', tag
+                print 'unknown namespace for', tag.encode('iso8859-1', 'replace')
 	    elif tag[-12:] == ' description':
-                print 'unknown namespace for', tag
+                print 'unknown namespace for', tag.encode('iso8859-1', 'replace')
 
     def unknown_endtag(self, tag):
         pass
@@ -532,7 +538,7 @@ class RSS_Parser(xmllib.XMLParser):
         try:
             self.handle_unicode_data(ENTITIES[entity])
         except KeyError:
-            print 'ignoring unknown entity ref', repr(entity)
+            print 'ignoring unknown entity ref', entity.encode('iso8859-1', 'replace')
 
 
 ##
@@ -566,14 +572,14 @@ class RSS_Resource:
 
         RSS_Resource._db_sync.acquire()
         try:
-            self._id_str = RSS_Resource._db['R' + self._url]
+            self._id_str = RSS_Resource._db['R' + self._url.encode('utf-8')]
             self._id = struct.unpack('>l', self._id_str)[0]
         except KeyError:
             RSS_Resource._seq_nr += 1
             RSS_Resource._db['S'] = struct.pack('>l', RSS_Resource._seq_nr)
             self._id = RSS_Resource._seq_nr
             self._id_str = struct.pack('>l', self._id)
-            RSS_Resource._db['R' + self._url] = self._id_str
+            RSS_Resource._db['R' + self._url.encode('utf-8')] = self._id_str
             RSS_Resource._db['S' + self._id_str] = self._url
 
         try:
@@ -652,10 +658,23 @@ class RSS_Resource:
 
         try:
             redirect_tries = 5
+            redirect_permanent = 1
             url_protocol, url_host, url_path = (self._url_protocol, self._url_host, self._url_path)
 
             while redirect_tries > 0:
                 redirect_tries = -(redirect_tries - 1)
+
+                if redirect_permanent:
+                    simple_url = url_protocol + '://' + url_host + url_path
+                    if simple_url != self._url:
+                        RSS_Resource._db_sync.acquire()
+                        merge_needed = RSS_Resource._db.has_key('R' + simple_url.encode('utf-8'))
+                        RSS_Resource._db_sync.release()
+
+                        if merge_needed:
+                            print 'permanent redirect: %s -> %s (merge needed)' % (self._url.encode('iso8859-1', 'replace'), simple_url.encode('iso8859-1', 'replace'))
+                        else:
+                            print 'permanent redirect: %s -> %s' % (self._url.encode('iso8859-1', 'replace'), simple_url.encode('iso8859-1', 'replace'))
 
                 if RSS_Resource.http_proxy:
                     host = RSS_Resource.http_proxy
@@ -679,7 +698,7 @@ class RSS_Resource:
                 errcode, errmsg, headers = h.getreply()
 
                 # check the error code
-                if errcode == 200:
+                if (errcode >= 200) and (errcode < 300):
                     content_encoding = headers.get('content-encoding', None)
                     transfer_encoding = headers.get('transfer-encoding', None)
 
@@ -706,7 +725,7 @@ class RSS_Resource:
 
                         bytes_received = bytes_received + len(l)
                         if bytes_received > 48 * 1024:
-                            raise 'file too large'
+                            raise ValueError('file too large')
 
                         l = f.read(4096)
 
@@ -773,42 +792,48 @@ class RSS_Resource:
 
                 # handle "301 Moved Permanently", "302 Found" and
                 # "307 Temporary Redirect"
-                elif (errcode == 301) or (errcode == 302) or (errcode == 307):
-                    redirect_url = headers['location']
-
-                    if not re_validprotocol.match(redirect_url):
-                        if redirect_url[0] == '/':
-                            redirect_url = '%s://%s%s' % (url_protocol, url_host, redirect_url)
-                        else:
-                            base_url = '%s://%s%s' % (url_protocol, url_host, url_path)
-                            base_url = base_url[:base_url.rindex('/')]
-                            redirect_url = '%s://%s%s/%s' % (url_protocol, url_host, base_url, redirect_url)
-
-                    print 'Following redirect (%d) to "%s"' % (errcode, redirect_url)
-                    url_protocol, url_host, url_path = split_url(redirect_url)
-                    redirect_tries = -redirect_tries
                 elif errcode == 304:
                     # RSS resource is valid
                     self._invalid_since = 0
+                elif (errcode >= 300) and (errcode < 400):
+                    if errcode != 301:
+                        redirect_permanent = 0
+
+                    redirect_url = headers.get('location', None)
+                    if redirect_url:
+                        if not re_validprotocol.match(redirect_url):
+                            if redirect_url[0] == '/':
+                                redirect_url = '%s://%s%s' % (url_protocol, url_host, redirect_url)
+                            else:
+                                base_url = '%s://%s%s' % (url_protocol, url_host, url_path)
+                                base_url = base_url[:base_url.rindex('/')]
+                                redirect_url = '%s://%s%s/%s' % (url_protocol, url_host, base_url, redirect_url)
+
+                        print 'Following redirect (%d) to "%s"' % (errcode, redirect_url.encode('iso8859-1', 'replace'))
+                        url_protocol, url_host, url_path = split_url(redirect_url)
+                        redirect_tries = -redirect_tries
+                    else:
+                        print errcode, errmsg, headers
+                        error_info = 'HTTP: %d %s' % (errcode, errmsg)
                 else:
                     print errcode, errmsg, headers
                     error_info = 'HTTP: %d %s' % (errcode, errmsg)
+        except socket.error, e:
+            error_info = 'socket: ' + str(e)
+        except TimeoutException, e:
+            error_info = 'timeout: ' + str(e)
+        except httplib.HTTPException, e:
+            error_info = 'HTTP: ' + str(e)
+        except DecompressorError, e:
+            error_info = 'decompressor: ' + str(e)
         except UnicodeError, e:
             error_info = 'encoding: ' + str(e)
         except LookupError, e:
             error_info = 'encoding: ' + str(e)
-        except ValueError, e:
-            error_info = 'HTTP compression: ' + str(e)
         except xmllib.Error, e:
             error_info = 'RDF/XML parser: ' + str(e)
-        except socket.error, e:
-            error_info = 'socket: ' + str(e)
-        except httplib.HTTPException, e:
-            error_info = 'HTTP: ' + str(e)
-        except TimeoutException, e:
-            error_info = 'timeout: ' + str(e)
-        except '', e:
-            error_info = 'misc: ' + e
+        except ValueError, e:
+            error_info = 'misc: ' + str(e)
         except:
             traceback.print_exc(file=sys.stdout)
 
@@ -897,8 +922,7 @@ def RSS_Resource_simplify(url):
     url_protocol, url_host, url_path = split_url(url)
 
     simple_url = url_protocol + '://' + url_host + url_path
-    if simple_url != url:
-        print 'simplified URL: %s -> %s' % (url, simple_url)
+    # TODO: return simple_url
     return url
 
 

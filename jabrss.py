@@ -130,7 +130,8 @@ class DataStorage:
 
     # @throws KeyError
     def get_cached_resource(self, url):
-        return self._resources[url]
+        simple_url = RSS_Resource_simplify(url)
+        return self._resources[simple_url]
 
     def get_resource_by_id(self, res_id):
         try:
@@ -854,11 +855,11 @@ class JabberSessionEventHandler:
 
                 text = ['Information about %s' % (url,)]
                 text.append('')
-                text.append('Last updated: %s GMT' % (time.asctime(time.gmtime(last_updated)),))
+                text.append('Last polled: %s GMT' % (time.asctime(time.gmtime(last_updated)),))
 
                 if len(history):
-                    text.append('Last modified: %s GMT' % (time.asctime(time.gmtime(history[-1][0])),))
-                text.append('Next update: ca. %s GMT' % (time.asctime(time.gmtime(next_update)),))
+                    text.append('Last updated: %s GMT' % (time.asctime(time.gmtime(history[-1][0])),))
+                text.append('Next poll: ca. %s GMT' % (time.asctime(time.gmtime(next_update)),))
                 text.append('Update interval: ~%d min' % ((next_update - last_updated) / 60,))
 
                 if invalid_since:
