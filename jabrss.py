@@ -242,7 +242,7 @@ class DataStorage:
                 try:
                     del self._res_uids_db['R' + struct.pack('>l', resource.id())]
                 except KeyError:
-                    pass
+                    print 'KeyError: remove_resource_user(%d)' % (resource.id(),)
             else:
                 self._res_uids_db_sync.acquire()
                 self._res_uids_db['R' + struct.pack('>l', resource.id())] = string.join(map(lambda x: struct.pack('>l', x), res_uids), '')
@@ -341,19 +341,19 @@ class DataStorage:
         try:
             del JabberUser._db['U' + user._jid.encode('utf-8')]
         except KeyError:
-            pass
+            print 'KeyError: remove_user(%s), U' % (user._jid.encode('iso8859-1', 'replace'),)
         try:
             del JabberUser._db['S' + user._uid_str]
         except KeyError:
-            pass
+            print 'KeyError: remove_user(%s), U' % (user._jid.encode('iso8859-1', 'replace'),)
         try:
             del JabberUser._db['R' + user._uid_str]
         except KeyError:
-            pass
+            print 'KeyError: remove_user(%s), R' % (user._jid.encode('iso8859-1', 'replace'),)
         try:
             del JabberUser._db['T' + user._uid_str]
         except KeyError:
-            pass
+            print 'KeyError: remove_user(%s), T' % (user._jid.encode('iso8859-1', 'replace'),)
         JabberUser._db_sync.release()
 
         print 'user %s (id %d) deleted' % (user._jid.encode('iso8859-1', 'replace'), user._uid)
@@ -626,7 +626,7 @@ class JabberUser:
         try:
             del JabberUser._db['I' + self._uid_str + struct.pack('>l', res_id)]
         except KeyError:
-            pass
+            print 'KeyError: remove_resource(%d)' % (res_id,)
         JabberUser._db_sync.release()
 
         self._res_ids.remove(res_id)
