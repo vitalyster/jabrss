@@ -1670,7 +1670,7 @@ class JabberSessionEventHandler:
 
 
     def _update_resource(self, resource, jab_session_proxy, db, res_db=None):
-        redirect_url, redirect_seq = resource.redirect_info()
+        redirect_url, redirect_seq = resource.redirect_info(res_db)
         if redirect_url != None:
             return
 

@@ -1181,17 +1181,18 @@ class RSS_Resource:
     
         return last_updated, last_modified, invalid_since
 
-    def redirect_info(self, db_cursor=None):
+    def redirect_info(self, res_db=None):
         if self._redirect == None:
             return None, None
 
-        if db_cursor == None:
-            cursor = Cursor(RSS_Resource._db)
+        if res_db == None:
+            db = RSS_Resource._db
         else:
-            cursor= db_cursor
+            db = res_db
+        cursor = Cursor(db)
 
         result = cursor.execute('SELECT url FROM resource WHERE rid=?',
-                       (self._redirect,))
+                                (self._redirect,))
         redirect_url = None
         for row in result:
             redirect_url = row[0]
