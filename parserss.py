@@ -584,7 +584,9 @@ class Feed_Parser(xmllib.XMLParser):
         self._channel = Data(title='', link='', descr='')
         self._items = []
 
-    def handle_xml(self, encoding, standalone):
+        self._set_encoding(None)
+
+    def _set_encoding(self, encoding):
         if not self._feed_encoding:
             if self._charset:
                 encoding = self._charset
@@ -599,25 +601,33 @@ class Feed_Parser(xmllib.XMLParser):
 
                 self._encoding = encoding
 
+    def handle_xml(self, encoding, standalone):
+        self._set_encoding(encoding)
+
 
     def feed(self, data):
         if self._bytes == 0:
             if data[:4] == codecs.BOM64_LE:
                 # probably not supported
                 self._feed_encoding = 'utf-32-le'
+                self._encoding = 'utf-8'
                 data = data[4:]
             elif data[:4] == codecs.BOM64_BE:
                 # probably not supported
                 self._feed_encoding = 'utf-32-be'
+                self._encoding = 'utf-8'
                 data = data[4:]
             elif data[:3] == '\xef\xbb\xbf':
                 self._feed_encoding = 'utf-8'
+                self._encoding = 'utf-8'
                 data = data[3:]
             elif data[:2] == codecs.BOM32_LE:
                 self._feed_encoding = 'utf-16-le'
+                self._encoding = 'utf-8'
                 data = data[2:]
             elif data[:2] == codecs.BOM32_BE:
                 self._feed_encoding = 'utf-16-be'
+                self._encoding = 'utf-8'
                 data = data[2:]
 
         self._bytes = self._bytes + len(data)
