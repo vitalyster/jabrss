@@ -1320,10 +1320,18 @@ class JabberSessionEventHandler:
                                 user = storage.get_user_by_id(uid)
 
                                 if user.get_delivery_state():
+                                    user.update_headline(resource,
+                                                         last_item_id,
+                                                         new_items)
+
+                                    # we need to unlock the resource
+                                    # here to prevent deadlock (the
+                                    # main thread, which is needed for
+                                    # sending, might be blocked
+                                    # waiting to acquire resource)
+                                    resource.unlock(); need_unlock = 0
                                     self._send_headlines(jab_session_proxy, user,
                                                          resource, new_items, 1)
-                                    user.update_headline(resource, last_item_id,
-                                                         new_items)
                             except KeyError:
                                 # just means that the user is no longer online
                                 pass
