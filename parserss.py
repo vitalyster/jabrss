@@ -27,7 +27,7 @@ except ImportError:
 import mimetools
 
 
-SOCKET_CONNECTTIMEOUT = 200
+SOCKET_CONNECTTIMEOUT = 60
 SOCKET_TIMEOUT = 60
 
 if hasattr(socket, 'setdefaulttimeout'):
@@ -35,14 +35,16 @@ if hasattr(socket, 'setdefaulttimeout'):
     socket.setdefaulttimeout(SOCKET_CONNECTTIMEOUT)
     TimeoutException = socket.timeout
 else:
+    class TimeoutException(socket.error):
+        pass
+
     # try to use timeoutsocket if it is available
     try:
         import timeoutsocket
+        timeoutsocket.Timeout = TimeoutException
         timeoutsocket.setDefaultSocketTimeout(SOCKET_CONNECTTIMEOUT)
-        TimeoutException = timeoutsocket.Timeout
     except ImportError:
-        class TimeoutException(Exception):
-            pass
+        pass
 
 
 re_validprotocol = re.compile('^(?P<protocol>[a-z]+):(?P<rest>.*)$')
@@ -1405,10 +1407,10 @@ class RSS_Resource:
 
             if self._invalid_since and not error_info and redirect_tries == 0:
                 error_info = 'redirect: maximum number of redirects exceeded'
-        except socket.error, e:
-            error_info = 'socket: ' + str(e)
         except TimeoutException, e:
             error_info = 'timeout: ' + str(e)
+        except socket.error, e:
+            error_info = 'socket: ' + str(e)
         except httplib.HTTPException, e:
             error_info = 'HTTP: ' + str(e)
         except DecompressorError, e:

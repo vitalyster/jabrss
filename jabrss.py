@@ -260,7 +260,10 @@ class DataStorage:
         resource_url = RSS_Resource_simplify(url)
 
         resources_unlocker = self.resources_lock()
-        return self._resources[resource_url]
+        try:
+            return self._resources[resource_url]
+        finally:
+            del resources_unlocker
 
     def get_resource_by_id(self, res_id, res_cursor=None):
         resources_unlocker = self.resources_lock()
