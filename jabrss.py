@@ -901,14 +901,15 @@ class JabberSessionEventHandler:
         self._connected = 1
 
     def onDisconnected(self):
-        self._connected = 0
+        if self._connected:
+            self._connected = 0
 
-        storage.evict_all_users()
+            storage.evict_all_users()
 
-        # reconnect after some timeout
-        print 'disconnected'
-        thread.start_new_thread(wait_and_reconnect,
-                                (self._jab_session, event_queue, 60))
+            # reconnect after some timeout
+            print 'disconnected'
+            thread.start_new_thread(wait_and_reconnect,
+                                    (self._jab_session, event_queue, 60))
 
     def onAuthError(self, code, data):
         print 'authError', code, data.encode('iso8859-1', 'replace')
