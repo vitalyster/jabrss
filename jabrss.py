@@ -1131,8 +1131,20 @@ class JabberSessionEventHandler:
             traceback.print_exc(file=sys.stdout)
 
     def onUnknownPacket(self, tag):
-        # TODO: close connection
         print 'unknownPacket', tag.toXML().encode('iso8859-1', 'replace')
+        if tag.name == 'stream:error':
+            print 'stream error: close connection and try to reconnect'
+
+            storage.evict_all_users()
+
+            if self._connected:
+                self._connected = 0
+                self._jab_session.disconnect()
+
+                # reconnect after some timeout
+                if not self._shutdown:
+                    thread.start_new_thread(wait_and_reconnect,
+                                            (self._jab_session, event_queue, 60))
 
     def onIqVersion(self):
         print 'iqVersion'
