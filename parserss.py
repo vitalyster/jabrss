@@ -1098,6 +1098,8 @@ class RSS_Resource:
 
         return redirect_url, self._redirect_seq
 
+    def penalty(self):
+        return self._penalty
 
     def error_info(self):
         return self._err_info
@@ -1110,6 +1112,12 @@ class RSS_Resource:
     # @return ([item], next_item_id, redirect_resource, redirect_seq, [redirects])
     # locks the resource object if new_items are returned
     def update(self, db=None, redirect_count=5):
+        now = int(time.time())
+
+        # sanity check update interval
+        if now - self._last_updated < 60:
+            return [], None, None, None, []
+
         error_info = None
         nr_new_items = 0
         feed_xml_downloaded = False
@@ -1118,11 +1126,11 @@ class RSS_Resource:
         items = []
 
         prev_updated = self._last_updated
-        self._last_updated = int(time.time())
+        self._last_updated = now
 
         if not self._invalid_since:
             # expect the worst, will be reset later
-            self._invalid_since = self._last_updated
+            self._invalid_since = now
 
 
         if db == None:

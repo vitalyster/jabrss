@@ -176,16 +176,28 @@ class DataStorage:
         self._users_sync = threading.Lock()
         self._resources = {}
         self._res_uids = {}
+        self._resources_sync = threading.Lock()
+
+        self._redirect_db = None
 
 
     def _redirect_cb(self, redirect_url, cursor, redirect_count):
         redirect_resource = self.get_resource(redirect_url, cursor)
+        # prevent resource from being evicted until redirect is processed
+        dummy_user.add_resource(redirect_resource, None,
+                                self._redirect_db.cursor())
         redirect_resource.unlock()
 
         new_items, next_item_id, redirect_target, redirect_seq, redirects = redirect_resource.update(cursor.getconnection(), redirect_count)
+
         if len(new_items) > 0:
             redirect_resource.unlock()
-            redirects.append((redirect_resource, new_items, next_item_id))
+            redirects.insert(0, (redirect_resource, new_items, next_item_id))
+        elif redirect_target != None:
+            redirect_resource.lock()
+            dummy_user.remove_user(redirect_resource,
+                                   self._redirect_db.cursor())
+            redirect_resource.unlock()
 
         if redirect_target != None:
             redirect_resource = redirect_target
@@ -195,9 +207,11 @@ class DataStorage:
 
     def users_lock(self):
         self._users_sync.acquire()
+        return Resource_Guard(lambda sync=self._users_sync: sync.release())
 
-    def users_unlock(self):
-        self._users_sync.release()
+    def resources_lock(self):
+        self._resources_sync.acquire()
+        return Resource_Guard(lambda sync=self._resources_sync: sync.release())
 
 
     # get resource (by URL) from cache, database or create new object
@@ -206,6 +220,9 @@ class DataStorage:
     def get_resource(self, url, res_cursor=None, lock=True):
         resource_url = RSS_Resource_simplify(url)
 
+        if lock:
+            resources_unlocker = self.resources_lock()
+
         while resource_url != None:
             cached_resource = True
 
@@ -213,11 +230,17 @@ class DataStorage:
                 # TODO: possible race-condition with evict_resource
                 resource = self._resources[resource_url]
                 if lock:
+                    resources_unlocker = None
                     resource.lock()
+                    resources_unlocker = self.resources_lock()
             except KeyError:
+                if lock:
+                    resources_unlocker = None
                 resource = RSS_Resource(resource_url, res_cursor)
                 if lock:
                     resource.lock()
+                    resources_unlocker = self.resources_lock()
+
                 cached_resource = False
 
             resource_url, redirect_seq = resource.redirect_info()
@@ -234,10 +257,14 @@ class DataStorage:
 
     # @throws KeyError
     def get_cached_resource(self, url):
-        simple_url = RSS_Resource_simplify(url)
-        return self._resources[simple_url]
+        resource_url = RSS_Resource_simplify(url)
+
+        resources_unlocker = self.resources_lock()
+        return self._resources[resource_url]
 
     def get_resource_by_id(self, res_id, res_cursor=None):
+        resources_unlocker = self.resources_lock()
+
         try:
             return self._resources[res_id]
         except KeyError:
@@ -246,6 +273,8 @@ class DataStorage:
 
 
     def evict_resource(self, resource):
+        resources_unlocker = self.resources_lock()
+
         try:
             del self._resources[resource.url()]
         except KeyError:
@@ -261,6 +290,7 @@ class DataStorage:
             pass
 
 
+    # @precondition self.resources_lock()
     def get_resource_uids(self, resource, db_cursor=None):
         res_id = resource.id()
 
@@ -322,12 +352,10 @@ class DataStorage:
         except KeyError:
             user = JabberUser(jid, jid_resource, presence_show)
 
-            self.users_lock()
-            try:
-                self._users[jid] = user
-                self._users[user.uid()] = user
-            finally:
-                self.users_unlock()
+            users_unlocker = self.users_lock()
+            self._users[jid] = user
+            self._users[user.uid()] = user
+            del users_unlocker
 
             for res_id in user._res_ids:
                 try:
@@ -339,24 +367,20 @@ class DataStorage:
             return user, jid_resource
 
     def evict_user(self, user):
-        self.users_lock()
+        users_unlocker = self.users_lock()
         try:
-            try:
-                del self._users[user.jid()]
-            except KeyError:
-                pass
+            del self._users[user.jid()]
+        except KeyError:
+            pass
 
-            try:
-                del self._users[user.uid()]
-            except KeyError:
-                pass
-        finally:
-            self.users_unlock()
+        try:
+            del self._users[user.uid()]
+        except KeyError:
+            pass
 
     def evict_all_users(self):
-        self.users_lock()
+        users_unlocker = self.users_lock()
         self._users = {}
-        self.users_unlock()
 
 
     def remove_user(self, user):
@@ -378,7 +402,6 @@ class DataStorage:
 
 
 storage = DataStorage()
-RSS_Resource._redirect_cb = storage._redirect_cb
 
 last_migrated = 0
 
@@ -625,6 +648,7 @@ class JabberUser:
     def resources(self):
         return self._res_ids
 
+    # @precondition resource.locked()
     # @throws ValueError
     def add_resource(self, resource, seq_nr=None, db_cursor=None):
         res_id = resource.id()
@@ -632,8 +656,10 @@ class JabberUser:
             self._res_ids.append(res_id)
 
             # also update storage res->uid mapping
+            resources_unlocker = storage.resources_lock()
             res_uids = storage.get_resource_uids(resource, db_cursor)
             res_uids.append(self.uid())
+            del resources_unlocker
 
             if db_cursor == None:
                 cursor = db.cursor()
@@ -645,6 +671,7 @@ class JabberUser:
         else:
             raise ValueError(res_id)
 
+    # @precondition resource.locked()
     # @throws ValueError
     def remove_resource(self, resource, db_cursor=None):
         res_id = resource.id()
@@ -652,11 +679,14 @@ class JabberUser:
         self._res_ids.remove(res_id)
 
         # also update storage res->uid mapping
+        resources_unlocker = storage.resources_lock()
         res_uids = storage.get_resource_uids(resource)
         try:
             res_uids.remove(self.uid())
         except ValueError:
             pass
+        del resources_unlocker
+
         if len(res_uids) == 0:
             storage.evict_resource(resource)
 
@@ -711,6 +741,89 @@ class JabberUser:
             self._commit_statistics(cursor)
 
         del db_txn_end
+
+
+class DummyJabberUser(JabberUser):
+    def __init__(self):
+        self._jid = None
+        self._show = jabIPresence.stXA
+        self._jid_resources = {None: self._show}
+
+        self._configuration = 0x20
+        self._store_messages = 0
+        self._size_limit = 0
+
+        self._uid = -1
+
+        self._res_ids = []
+
+        self._stat_start = 0
+        self._nr_headlines = []
+        self._size_headlines = []
+
+
+    def _commit_statistics(self, db_cursor=None):
+        pass
+
+    def _update_configuration(self):
+        pass
+
+
+
+    def _update_presence(self):
+        pass
+
+    def get_delivery_state(self, presence=0):
+        return False
+
+
+    # @precondition resource.locked()
+    # @throws ValueError
+    def add_resource(self, resource, seq_nr=None, db_cursor=None):
+        res_id = resource.id()
+        print 'dummy adding res', res_id, len(self._res_ids)
+
+        if res_id not in self._res_ids:
+            self._res_ids.append(res_id)
+
+            # also update storage res->uid mapping
+            resources_unlocker = storage.resources_lock()
+            res_uids = storage.get_resource_uids(resource, db_cursor)
+            res_uids.append(self.uid())
+        else:
+            raise ValueError(res_id)
+
+    # @precondition resource.locked()
+    # @throws ValueError
+    def remove_resource(self, resource, db_cursor=None):
+        res_id = resource.id()
+        print 'dummy removing res', res_id, len(self._res_ids)
+
+        self._res_ids.remove(res_id)
+
+        # also update storage res->uid mapping
+        resources_unlocker = storage.resources_lock()
+        res_uids = storage.get_resource_uids(resource, db_cursor)
+        try:
+            res_uids.remove(self.uid())
+        except ValueError:
+            pass
+        del resources_unlocker
+
+        if len(res_uids) == 0:
+            storage.evict_resource(resource)
+
+
+    def headline_id(self, resource, db_cursor=None):
+        return 0
+
+
+    def update_headline(self, resource, headline_id, new_items=[],
+                        db_cursor=None):
+        pass
+
+
+dummy_user = DummyJabberUser()
 
 
 class JabberSessionEventHandler:
@@ -1022,6 +1135,7 @@ class JabberSessionEventHandler:
 
                 last_updated, last_modified, invalid_since = resource.times()
                 next_update = resource.next_update(0)
+                penalty = resource.penalty()
                 history = resource.history()
 
                 text = ['Information about %s' % (url,)]
@@ -1032,6 +1146,7 @@ class JabberSessionEventHandler:
                     text.append('Last updated: %s GMT' % (time.asctime(time.gmtime(history[-1][0])),))
                 text.append('Next poll: ca. %s GMT' % (time.asctime(time.gmtime(next_update)),))
                 text.append('Update interval: ~%d min' % ((next_update - last_updated) / 60,))
+                text.append('Feed penalty: %d (out of 1024)' % (penalty,))
 
                 if invalid_since:
                     error_info = resource.error_info()
@@ -1084,7 +1199,11 @@ class JabberSessionEventHandler:
             print 'deleting user\'s %s subscriptions: %s' % (jid.encode('iso8859-1', 'replace'), repr(user.resources()))
             for res_id in user.resources():
                 resource = storage.get_resource_by_id(res_id)
-                user.remove_resource(resource)
+                resource.lock()
+                try:
+                    user.remove_resource(resource)
+                finally:
+                    resource.unlock()
 
             storage.remove_user(user)
         except KeyError:
@@ -1439,6 +1558,9 @@ class JabberSessionEventHandler:
             db = get_db()
             res_db = RSS_Resource_db()
 
+            RSS_Resource._redirect_cb = storage._redirect_cb
+            storage._redirect_db = db
+
             self._update_queue_cond.acquire()
             while not self._shutdown:
                 if self._update_queue:
@@ -1477,6 +1599,7 @@ class JabberSessionEventHandler:
 
         cursor = db.cursor()
         db_txn_end = None
+        users_unlocker = None
         redirect_resource = None
         redirects = []
 
@@ -1484,20 +1607,19 @@ class JabberSessionEventHandler:
         try:
             uids = storage.get_resource_uids(resource, cursor)
 
-            storage.users_lock()
-            try:
-                used = False
-                for uid in uids:
-                    try:
-                        user = storage.get_user_by_id(uid)
-                        used = True
-                    except KeyError:
-                        pass
+            users_unlocker = storage.users_lock()
+            used = False
+            for uid in uids:
+                try:
+                    user = storage.get_user_by_id(uid)
+                    used = True
+                except KeyError:
+                    pass
 
-                if not used:
-                    storage.evict_resource(resource)
-            finally:
-                storage.users_unlock()
+            if not used:
+                storage.evict_resource(resource)
+
+            users_unlocker = None
 
             if used:
                 resource.unlock(); need_unlock = False
@@ -1507,6 +1629,8 @@ class JabberSessionEventHandler:
 
                     if len(new_items) > 0:
                         need_unlock = True
+                    elif redirect_resource != None:
+                        resource.lock(); need_unlock = True
 
                     if len(new_items) > 0 or redirect_resource != None:
                         deliver_users = []
@@ -1518,12 +1642,21 @@ class JabberSessionEventHandler:
                                 user = storage.get_user_by_id(uid)
 
                                 if redirect_resource != None:
+                                    redirect_resource.lock()
                                     try:
-                                        user.add_resource(redirect_resource,
-                                                          redirect_seq,
-                                                          cursor)
-                                    except ValueError:
-                                        pass
+                                        try:
+                                            user.add_resource(redirect_resource,
+                                                              redirect_seq,
+                                                              cursor)
+                                        except ValueError:
+                                            pass
+                                        try:
+                                            dummy_user.remove_resource(redirect_resource, cursor)
+                                        except ValueError:
+                                            pass
+                                    finally:
+                                        redirect_resource.unlock()
+
 
                                 if len(new_items) and user.get_delivery_state():
                                     if redirect_resource == None:
@@ -1563,6 +1696,7 @@ class JabberSessionEventHandler:
                     self.schedule_update(resource)
         finally:
             db_txn_end = None
+            users_unlocker = None
             if need_unlock:
                 resource.unlock(); need_unlock = False
 
@@ -1574,6 +1708,11 @@ class JabberSessionEventHandler:
             resource.lock(); need_unlock = True
             try:
                 print 'processing updated resource', resource.url()
+                try:
+                    dummy_user.remove_resource(resource, cursor)
+                except ValueError:
+                    pass
+
                 uids = storage.get_resource_uids(resource, cursor)
                 for uid in uids:
                     try:
