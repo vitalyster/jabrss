@@ -154,6 +154,14 @@ judoIConstElement = xpcom.components.interfaces.judoIConstElement
 jab_session = xpcom.components.classes[JABBERSESSION_CONTRACTID].createInstance(jabISession)
 
 
+class Resource_Guard:
+    def __init__(self, cleanup_handler):
+        self._cleanup_handler = cleanup_handler
+
+    def __del__(self):
+        self._cleanup_handler()
+
+
 def get_db():
     db = apsw.Connection('jabrss.db')
     db.setbusytimeout(3000)
@@ -242,10 +250,13 @@ class DataStorage:
             res_uids = []
 
             if cursor == None:
-                cursor = db.cursor()
-            cursor.execute('SELECT uid FROM user_resource WHERE rid=?',
-                           (res_id,))
-            for row in cursor:
+                my_cursor = db.cursor()
+            else:
+                my_cursor = cursor
+
+            my_cursor.execute('SELECT uid FROM user_resource WHERE rid=?',
+                              (res_id,))
+            for row in my_cursor:
                 res_uids.append(row[0])
 
             self._res_uids[res_id] = res_uids
@@ -331,13 +342,15 @@ class DataStorage:
     def remove_user(self, user):
         cursor = db.cursor()
         cursor.execute('BEGIN')
+        db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
+
         cursor.execute('DELETE FROM user_stat WHERE uid=?',
                        (user.uid(),))
         cursor.execute('DELETE FROM user_resource WHERE uid=?',
                        (user.uid(),))
         cursor.execute('DELETE FROM user WHERE uid=?',
                        (user.uid(),))
-        cursor.execute('END')
+        del db_txn_end
 
         print 'user %s (id %d) deleted' % (user._jid.encode('iso8859-1', 'replace'), user._uid)
         self.evict_user(user)
@@ -443,10 +456,12 @@ class JabberUser:
 
     def _commit_statistics(self, cursor=None):
         if cursor == None:
-            cursor = db.cursor()
+            my_cursor = db.cursor()
+        else:
+            my_cursor = cursor
 
-        cursor.execute('INSERT INTO user_stat (uid, start, nr_msgs0, nr_msgs1, nr_msgs2, nr_msgs3, nr_msgs4, nr_msgs5, nr_msgs6, nr_msgs7, size_msgs0, size_msgs1, size_msgs2, size_msgs3, size_msgs4, size_msgs5, size_msgs6, size_msgs7) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                       tuple([self._uid, self._stat_start] + self._nr_headlines + self._size_headlines))
+        my_cursor.execute('INSERT INTO user_stat (uid, start, nr_msgs0, nr_msgs1, nr_msgs2, nr_msgs3, nr_msgs4, nr_msgs5, nr_msgs6, nr_msgs7, size_msgs0, size_msgs1, size_msgs2, size_msgs3, size_msgs4, size_msgs5, size_msgs6, size_msgs7) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                          tuple([self._uid, self._stat_start] + self._nr_headlines + self._size_headlines))
 
 
     def uid(self):
@@ -642,9 +657,11 @@ class JabberUser:
 
     def update_headline(self, resource, headline_id, new_items=[],
                         cursor=None):
+        db_txn_end = None
         if cursor == None:
             my_cursor = db.cursor()
             my_cursor.execute('BEGIN')
+            db_txn_end = Resource_Guard(lambda cursor=cursor: my_cursor.execute('END'))
         else:
             my_cursor = cursor
 
@@ -661,8 +678,7 @@ class JabberUser:
             self._size_headlines[-1] += items_size
             self._commit_statistics(my_cursor)
 
-        if cursor == None:
-            my_cursor.execute('END')
+        del db_txn_end
 
 
 class JabberSessionEventHandler:
@@ -1097,11 +1113,15 @@ class JabberSessionEventHandler:
 
                 cursor = db.cursor()
                 cursor.execute('SELECT jid FROM user')
+                delete_users = []
                 for row in cursor:
                     username = row[0]
                     if not subscribers.has_key(username):
-                        print 'user "%s" in database, but not subscribed to the service' % (username.encode('iso8859-1', 'replace'),)
-                        self._delete_user(username)
+                        delete_users.append(username)
+
+                for username in delete_users:
+                    print 'user "%s" in database, but not subscribed to the service' % (username.encode('iso8859-1', 'replace'),)
+                    self._delete_user(username)
 
             elif xmlns == 'jabber:iq:agents':
                 # ignore agents
@@ -1435,6 +1455,7 @@ class JabberSessionEventHandler:
                         deliver_users = []
                         uids = storage.get_resource_uids(resource, cursor)
                         cursor.execute('BEGIN')
+                        db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
                         for uid in uids:
                             try:
                                 user = storage.get_user_by_id(uid)
@@ -1452,7 +1473,7 @@ class JabberSessionEventHandler:
                         # prevent deadlock (the main thread, which is
                         # needed for sending, might be blocked waiting
                         # to acquire resource)
-                        cursor.execute('END')
+                        del db_txn_end
                         resource.unlock(); need_unlock = 0
 
                         for user in deliver_users:
