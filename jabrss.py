@@ -24,9 +24,29 @@ from parserss import RSS_Resource, RSS_Resource_id2url, RSS_Resource_simplify
 from parserss import UrlError
 
 
-TEXT_WELCOME = 'Welcome to JabRSS. Please note that the current privacy policy is quite simple: all your data are belong to me and might be sold to your favorite spammer. :-) For more information, please visit the JabRSS Web site at http://JabXPCOM.sunsite.dk/jabrss/\n\nBTW, if you like this service, you can donate to keep it running, see http://cmeerw.org/donate.html'
+TEXT_WELCOME = '''\
+Welcome to JabRSS. Please note that the current privacy policy is quite simple: all your data are belong to me and might be sold to your favorite spammer. :-) For more information, please visit the JabRSS Web site at http://jabrss.cmeerw.org
 
-TEXT_HELP = 'Please refer to the JabRSS Web site (http://JabXPCOM.sunsite.dk/jabrss/) for more information. If you like this service you might also consider a donation, see http://cmeerw.org/donate.html'
+BTW, if you like this service, you can help keeping it running by making a donation, see http://cmeerw.org/donate.html'''
+
+TEXT_HELP = '''\
+Supported commands:
+
+subscribe http://host.domain/path/feed.rss
+unsubscribe http://host.domain/path/feed.rss
+info http://host.domain/path/feed.rss
+list
+set ( plaintext | chat | headline )
+set also_deliver [ Away ] [ XA ] [ DND ]
+set size_limit <num>
+set store_messages <num>
+configuration
+show statistics
+show usage
+
+Please refer to the JabRSS command reference at http://cmeerw.org/dev/book/view/30 for more information.
+
+And of course, if you like this service you might also consider a donation, see http://cmeerw.org/donate.html'''
 
 
 JABBER_SERVER = None
@@ -1188,7 +1208,7 @@ class JabberSessionEventHandler:
                             user.update_headline(resource, headline_id, new_items)
                     finally:
                         resource.unlock()
-        else:
+        elif (presence.type != jabIPresence.ptSubscribed):
             try:
                 user, jid_resource = storage.get_user(presence.sender)
                 user.set_presence(jid_resource, presence.show)
