@@ -1398,12 +1398,17 @@ class JabberSessionEventHandler:
                 body = body + ('%d headlines suppressed (from %s)\n\n' % (len(items) - user.get_store_messages(), resource.channel_info()[0]))
                 items = items[-user.get_store_messages():]
 
-            for title, link, descr in items:
-                if (descr == '') or (descr == title):
-                    body = body + ('%s\n%s\n\n' % (title, link))
-                else:
-                    body = body + ('%s\n%s\n%s\n\n' % (title, link,
-                                                       descr[:user.get_size_limit()]))
+            for item in items:
+                try:
+                    title, link, descr = item
+                    
+                    if (descr == '') or (descr == title):
+                        body = body + ('%s\n%s\n\n' % (title, link))
+                    else:
+                        body = body + ('%s\n%s\n%s\n\n' % (title, link,
+                                                           descr[:user.get_size_limit()]))
+                except ValueError:
+                    print 'trying to unpack tuple of wrong size', repr(item)
 
             if message_type == 0:
                 mt = jabIConstMessage.mtNormal

@@ -45,7 +45,7 @@ re_supportedprotocol = re.compile('^(http)$')
 re_validhost = re.compile('^(?P<host>[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+)(:(?P<port>[0-9a-z]+))?(?P<path>(/.*)?)$')
 re_blockhost = re.compile('^(10\.|127\.|172\.1[6789]\.|172\.2[0-9]\.|172\.3[01]\.|192\.168\.)')
 
-re_blank = re.compile('([ \\t\\n][ \\t\\n]+|[\\t\\n])')
+re_blank = re.compile('([ \\t\\n][ \\t\\n]+|[\x00\x0c\\t\\n])')
 
 re_spliturl = re.compile('^(?P<protocol>[a-z]+)://(?P<host>[^/]+)(?P<path>/?.*)$')
 
