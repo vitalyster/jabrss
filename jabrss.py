@@ -436,6 +436,13 @@ RSS_Resource._rename_cb = storage._rename_cb
 last_migrated = 0
 
 
+def strip_resource(jid):
+    pos = string.find(jid, '/')
+    if pos != -1:
+        jid = jid[:pos]
+
+    return jid.lower()
+
 ##
 # Database schema:
 #  'S' -> user_id sequence number (4-byte struct)
@@ -952,9 +959,7 @@ class JabberSessionEventHandler:
         jid = args[0]
         conf = map(lambda x: string.atoi(x, 16), string.split(args[1], ','))
         args = args[2:]
-        pos = string.find(jid, '/')
-        if pos != -1:
-            jid = jid[:pos]
+        jid = strip_resource(jid)
 
         msg_text = TEXT_MIGRATE
         try:
@@ -1190,7 +1195,7 @@ class JabberSessionEventHandler:
                 for item in query.findElements('item'):
                     item.queryInterface(judoIConstElement)
 
-                    jid = item.getAttrib('jid')
+                    jid = strip_resource(item.getAttrib('jid'))
                     subscription = item.getAttrib('subscription')
                     if subscription == 'both':
                         try:
