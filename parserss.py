@@ -16,16 +16,18 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
 # USA
 
-import gdbm, httplib, rfc822, os, random, re, string, struct, sys
-import time, threading, traceback, zlib
+import gdbm, httplib, rfc822, os, random, re, socket, string, struct, sys
+import time, threading, traceback, types, zlib
 import xmllib
 
 # try to use timeoutsocket if it is available
 try:
     import timeoutsocket
     timeoutsocket.setDefaultSocketTimeout(60)
+    TimeoutException = timeoutsocket.Timeout
 except ImportError:
-    pass
+    class TimeoutException(Exception):
+        pass
 
 
 re_validhost = re.compile('^([-0-9a-z]+\.)+([-0-9a-z][-0-9a-z]+)$')
@@ -512,6 +514,7 @@ class RSS_Parser(xmllib.XMLParser):
 #  'S' + resource_id -> URL
 #  'R' + URL -> resource_id (4-byte struct)
 #  'D' + resource_id -> Resource data
+#  'E' + resource_id -> error information (string)
 #  'I' + resource_id -> Resource info
 #  'H' + resource_id -> Resource history
 #  'T' + resource_id -> Resource times
@@ -591,11 +594,26 @@ class RSS_Resource:
     def times(self):
         return (self._last_updated, self._last_modified, self._invalid_since)
 
+    def error_info(self):
+        error_info = None
+
+        if self._invalid_since:
+            RSS_Resource._db_sync.acquire()
+            try:
+                error_info = RSS_Resource._db['E' + self._id_str].decode('utf8')
+            except KeyError:
+                pass
+            RSS_Resource._db_sync.release()
+
+        return error_info
+
+
     def history(self):
         return self._history
 
 
     def update(self):
+        error_info = None
         nr_new_items = 0
         items = []
 
@@ -729,7 +747,7 @@ class RSS_Resource:
                 # "307 Temporary Redirect"
                 elif (errcode == 301) or (errcode == 302) or (errcode == 307):
                     redirect_url = headers['location']
-                    print 'Following redirect to "%s"' % (redirect_url,)
+                    print 'Following redirect (%d) to "%s"' % (errcode, redirect_url)
                     url_host, url_path = split_url(redirect_url)
                     redirect_tries = -redirect_tries
                 elif errcode == 304:
@@ -737,10 +755,35 @@ class RSS_Resource:
                     self._invalid_since = 0
                 else:
                     print errcode, errmsg, headers
+                    error_info = 'HTTP: %d %s' % (errcode, errmsg)
+        except types.StringType, e:
+            error_info = 'misc: ' + e
+        except ValueError, e:
+            error_info = 'HTTP compression: ' + str(e)
+        except xmllib.Error, e:
+            error_info = 'RDF/XML parser: ' + str(e)
+        except UnicodeError, e:
+            error_info = 'encoding: ' + str(e)
+        except socket.error, e:
+            error_info = 'socket: ' + str(e)
+        except httplib.HTTPException, e:
+            error_info = 'HTTP: ' + str(e)
+        except TimeoutException, e:
+            error_info = 'timeout: ' + str(e)
         except:
             traceback.print_exc(file=sys.stdout)
 
+        if error_info:
+            print 'Error: %s' % (error_info,)
+
         RSS_Resource._db_sync.acquire()
+        if error_info:
+            RSS_Resource._db['E' + self._id_str] = error_info.encode('utf8')
+        else:
+            try:
+                del RSS_Resource._db['E' + self._id_str]
+            except KeyError:
+                pass
         RSS_Resource._db['T' + self._id_str] = struct.pack('>lll', self._last_modified, self._last_updated, self._invalid_since)
         RSS_Resource._db_sync.release()
         if nr_new_items:

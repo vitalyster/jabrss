@@ -860,6 +860,12 @@ class JabberSessionEventHandler:
                 text.append('Next update: ca. %s GMT' % (time.asctime(time.gmtime(next_update)),))
                 text.append('Update interval: ~%d min' % ((next_update - last_updated) / 60,))
 
+                if invalid_since:
+                    error_info = resource.error_info()
+                    if error_info:
+                        text.append('')
+                        text.append('Error: %s' % (error_info,))
+
                 if len(history) >= 4:
                     sum_items = reduce(lambda x, y: (y[0], x[1] + y[1]),
                                        history[1:-1])[1]
