@@ -1507,6 +1507,25 @@ def console_handler(jab_session_proxy):
     while event_handler._connected or (event_handler._shutdown < 2):
         time.sleep(1)
 
+    try:
+        storage._res_uids_db.close()
+    except:
+        print 'error closing DataStorage db'
+        traceback.print_exc(file=sys.stdout)
+
+    try:
+        JabberUser._db.close()
+    except:
+        print 'error closing JabberUser db'
+        traceback.print_exc(file=sys.stdout)
+
+    try:
+        RSS_Resource._db.close()
+    except:
+        print 'error closing RSS db'
+        traceback.print_exc(file=sys.stdout)
+
+    print 'JabRSS shutdown complete'
     time.sleep(1)
     sys.exit(0)
 
