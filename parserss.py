@@ -1418,12 +1418,11 @@ class RSS_Resource:
                     redirect_url = headers.get('location', None)
                     if redirect_url:
                         if not re_validprotocol.match(redirect_url):
-                            if redirect_url[0] == '/':
-                                redirect_url = '%s://%s%s' % (url_protocol, url_host, redirect_url)
-                            else:
-                                base_url = '%s://%s%s' % (url_protocol, url_host, url_path)
-                                base_url = base_url[:base_url.rindex('/')]
-                                redirect_url = '%s://%s%s/%s' % (url_protocol, url_host, base_url, redirect_url)
+                            base_url = '%s://%s' % (url_protocol, url_host)
+                            if redirect_url[0] != '/':
+                                redirect_url = url_path[:url_path.rindex('/')] + '/' + redirect_url
+
+                            redirect_url = base_url + redirect_url
 
                         print 'Following redirect (%d) to "%s"' % (errcode, redirect_url.encode('iso8859-1', 'replace'))
                         url_protocol, url_host, url_path = split_url(redirect_url)
