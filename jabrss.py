@@ -1365,6 +1365,7 @@ class JabberSessionEventHandler:
             if MIGRATE_TO:
                 message = self._jab_session.createMessage(presence.sender, 'Sorry, this JabRSS instance doesn\'t accept new users, please use the new JabRSS instance at %s instead.' % (MIGRATE_TO,), jabIConstMessage.mtNormal)
                 self._jab_session.sendPacket(message)
+                self._remove_user(presence.sender)
                 return
 
             self._jab_session.sendPacket(presence.reply(jabIPresence.ptSubscribed))
