@@ -223,10 +223,6 @@ def convert_resources(conn):
             i = 0
 
         for title, link, descr in res_items:
-            if title == '':
-                title = None
-            if link == '':
-                link = None
             if descr == '':
                 descr = None
 

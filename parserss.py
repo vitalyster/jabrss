@@ -118,6 +118,9 @@ def normalize_obj(o):
 def normalize_item(item):
     normalize_obj(item)
 
+    if item.descr == '':
+        item.descr = None
+
     if not hasattr(item, 'descr_plain'):
         item.descr_plain = item.descr
 

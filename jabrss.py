@@ -1315,7 +1315,7 @@ class JabberSessionEventHandler:
                 try:
                     title, link, descr = (item.title, item.link, item.descr_plain)
                     
-                    if (descr == '') or (descr == title):
+                    if not descr or (descr == title):
                         body = body + ('%s\n%s\n\n' % (title, link))
                     else:
                         body = body + ('%s\n%s\n%s\n\n' % (title, link,
