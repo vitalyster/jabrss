@@ -16,11 +16,13 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
 # USA
 
-import bisect, gdbm, getopt, os, string, struct, sys, thread, threading, time
+import bisect, getopt, os, string, struct, sys, thread, threading, time
 import traceback
+import apsw
 import xpcom.components
 
 from parserss import RSS_Resource, RSS_Resource_id2url, RSS_Resource_simplify
+from parserss import RSS_Resource_db
 from parserss import UrlError
 
 
@@ -152,16 +154,21 @@ judoIConstElement = xpcom.components.interfaces.judoIConstElement
 jab_session = xpcom.components.classes[JABBERSESSION_CONTRACTID].createInstance(jabISession)
 
 
+def get_db():
+    db = apsw.Connection('jabrss.db')
+    db.setbusytimeout(3000)
+    return db
+
+db = get_db()
+res_db = RSS_Resource_db()
+
+
 class DataStorage:
     def __init__(self):
         self._users = {}
         self._users_sync = threading.Lock()
         self._resources = {}
         self._res_uids = {}
-        self._res_uids_db = gdbm.open('jabrss_urlusers.db', 'c')
-        self._res_uids_db.reorganize()
-        self._res_uids_db_updates = 0
-        self._res_uids_db_sync = threading.Lock()
 
 
     def _rename_cb(self, old_url, new_url):
@@ -211,7 +218,6 @@ class DataStorage:
             RSS_Resource.schedule_update(resource)
             return resource
 
-
     def evict_resource(self, resource):
         try:
             del self._resources[resource.url()]
@@ -228,99 +234,25 @@ class DataStorage:
             pass
 
 
-    def get_resource_uids(self, resource):
+    def get_resource_uids(self, resource, cursor=None):
+        res_id = resource.id()
+
         try:
-            res_uids = self._res_uids[resource.id()]
+            res_uids = self._res_uids[res_id]
         except KeyError:
             res_uids = []
-            self._res_uids_db_sync.acquire()
-            try:
-                res_uids_str = self._res_uids_db['R' + struct.pack('>l', resource.id())]
-                for i in range(0, len(res_uids_str), 4):
-                    res_uids.append(struct.unpack('>l',
-                                                  res_uids_str[i:i + 4])[0])
-            except KeyError:
-                self._res_uids[resource.id()] = res_uids
-            self._res_uids[resource.id()] = res_uids
-            self._res_uids_db_sync.release()
+
+            if cursor == None:
+                cursor = db.cursor()
+            cursor.execute('SELECT uid FROM user_resource WHERE rid=?',
+                           (res_id,))
+            for row in cursor:
+                res_uids.append(row[0])
+
+            self._res_uids[res_id] = res_uids
+
 
         return res_uids
-
-    def add_resource_user(self, resource, user):
-        res_uids = self.get_resource_uids(resource)
-        if res_uids == []:
-            self._res_uids[resource.id()] = res_uids
-        res_uids.append(user.uid())
-
-        res_uids_str = string.join(map(lambda x: struct.pack('>l', x), res_uids), '')
-        self._res_uids_db_sync.acquire()
-        try:
-            res_uids_old = self._res_uids_db['R' + struct.pack('>l', resource.id())]
-            if res_uids_str[:-4] != res_uids_old:
-                print 'XXX: db inconsistency in add_resource_user', resource.id(), user.uid()
-        except KeyError:
-            pass
-        self._res_uids_db['R' + struct.pack('>l', resource.id())] = res_uids_str
-
-        if self._res_uids_db_updates > 64:
-            self._res_uids_db_updates = 0
-            self._res_uids_db.reorganize()
-        else:
-            self._res_uids_db_updates += 1
-
-        self._res_uids_db_sync.release()
-
-
-    # @throws ValueError
-    def remove_resource_user(self, resource, user):
-        res_uids = self.get_resource_uids(resource)
-        try:
-            res_uids.remove(user.uid())
-
-            if len(res_uids) == 0:
-                try:
-                    del self._resources[resource.url()]
-                except KeyError:
-                    pass
-                try:
-                    del self._resources[resource.id()]
-                except KeyError:
-                    pass
-
-                try:
-                    del self._res_uids[resource.id()]
-                except KeyError:
-                    pass
-
-                self._res_uids_db_sync.acquire()
-                try:
-                    res_uids_old = self._res_uids_db['R' + struct.pack('>l', resource.id())]
-                    if res_uids_old != struct.pack('>l', user.uid()):
-                        print 'XXX: db inconsistency in remove_resource_user', resource.id(), user.uid()
-                    del self._res_uids_db['R' + struct.pack('>l', resource.id())]
-                except KeyError:
-                    print 'KeyError: remove_resource_user(%d)' % (resource.id(),)
-            else:
-                res_uids_str = string.join(map(lambda x: struct.pack('>l', x), res_uids), '')
-                self._res_uids_db_sync.acquire()
-                try:
-                    res_uids_old = self._res_uids_db['R' + struct.pack('>l', resource.id())]
-                    if len(res_uids_str) != (len(res_uids_old) - 4):
-                        print 'XXX: db inconsistency in remove_resource_user', resource.id(), user.uid()
-                except KeyError:
-                    pass
-
-                self._res_uids_db['R' + struct.pack('>l', resource.id())] = res_uids_str
-
-            if self._res_uids_db_updates > 64:
-                self._res_uids_db_updates = 0
-                self._res_uids_db.reorganize()
-            else:
-                self._res_uids_db_updates += 1
-            self._res_uids_db_sync.release()
-        except ValueError:
-            print 'ValueError: remove_resource_user(%d), %s' % (resource.id(),
-                                                                repr(res_uids))
 
 
     # @throws KeyError
@@ -396,34 +328,17 @@ class DataStorage:
         self._users = {}
         self.users_unlock()
 
-        self._res_uids_db_sync.acquire()
-        self._res_uids_db.sync()
-        self._res_uids_db_sync.release()
-
-        JabberUser._db_sync.acquire()
-        JabberUser._db.sync()
-        JabberUser._db_sync.release()
-
 
     def remove_user(self, user):
-        JabberUser._db_sync.acquire()
-        try:
-            del JabberUser._db['U' + user._jid.encode('utf-8')]
-        except KeyError:
-            print 'KeyError: remove_user(%s), U' % (user._jid.encode('iso8859-1', 'replace'),)
-        try:
-            del JabberUser._db['S' + user._uid_str]
-        except KeyError:
-            print 'KeyError: remove_user(%s), U' % (user._jid.encode('iso8859-1', 'replace'),)
-        try:
-            del JabberUser._db['R' + user._uid_str]
-        except KeyError:
-            print 'KeyError: remove_user(%s), R' % (user._jid.encode('iso8859-1', 'replace'),)
-        try:
-            del JabberUser._db['T' + user._uid_str]
-        except KeyError:
-            print 'KeyError: remove_user(%s), T' % (user._jid.encode('iso8859-1', 'replace'),)
-        JabberUser._db_sync.release()
+        cursor = db.cursor()
+        cursor.execute('BEGIN')
+        cursor.execute('DELETE FROM user_stat WHERE uid=?',
+                       (user.uid(),))
+        cursor.execute('DELETE FROM user_resource WHERE uid=?',
+                       (user.uid(),))
+        cursor.execute('DELETE FROM user WHERE uid=?',
+                       (user.uid(),))
+        cursor.execute('END')
 
         print 'user %s (id %d) deleted' % (user._jid.encode('iso8859-1', 'replace'), user._uid)
         self.evict_user(user)
@@ -443,27 +358,7 @@ def strip_resource(jid):
 
     return jid.lower()
 
-##
-# Database schema:
-#  'S' -> user_id sequence number (4-byte struct)
-#  'S' + user_id -> 'user@domain'
-#  'T' + user_id -> stat_start, [nr_headlines]
-#  'U' + 'user@domain' -> user_id (4-byte struct) + configuration
-#  'R' + user_id -> [resource_id (4-byte struct), ...]
-#  'I' + user_id + resource_id -> headline_id (4-byte struct)
-##
 class JabberUser:
-    _db = gdbm.open('jabrss_users.db', 'c')
-    _db.reorganize()
-    _db_updates = 0
-    _db_sync = threading.Lock()
-
-    try:
-        _seq_nr = struct.unpack('>l', _db['S'])[0]
-    except:
-        _seq_nr = 0
-
-
     ##
     # self._jid
     # self._uid
@@ -490,66 +385,44 @@ class JabberUser:
 
         self._configuration = 0
         self._store_messages = 16
-        self._size_limit = 0
-        JabberUser._db_sync.acquire()
+        self._size_limit = None
+
+        cursor = db.cursor()
+
         try:
-            uid_conf = JabberUser._db['U' + jid.encode('utf-8')]
+            cursor.execute('SELECT uid, conf, store_messages, size_limit FROM user WHERE jid=?',
+                       (self._jid,))
+            self._uid, self._configuration, self._store_messages, self._size_limit = cursor.next()
+        except StopIteration:
+            cursor.execute('INSERT INTO user (jid, conf, store_messages, size_limit) VALUES (?, ?, ?, ?)',
+                           (self._jid, self._configuration, self._store_messages, self._size_limit))
+            self._uid = db.last_insert_rowid()
 
-            self._uid_str = uid_conf[0:4]
-            self._uid = struct.unpack('>l', self._uid_str)[0]
+        if self._size_limit == None:
+            self._size_limit = 0
+        else:
+            self._size_limit *= 16
 
-            if len(uid_conf) >= 8:
-                self._configuration = struct.unpack('>l', uid_conf[4:8])[0]
-            if len(uid_conf) >= 9:
-                self._store_messages = struct.unpack('>B', uid_conf[8])[0]
-            if len(uid_conf) >= 10:
-                self._size_limit = struct.unpack('>B', uid_conf[9])[0] * 16
-        except KeyError:
-            JabberUser._seq_nr += 1
-            JabberUser._db['S'] = struct.pack('>l', JabberUser._seq_nr)
-            self._uid = JabberUser._seq_nr
-            self._uid_str = struct.pack('>l', self._uid)
-            JabberUser._db['U' + self._jid.encode('utf-8')] = self._uid_str + struct.pack('>l', self._configuration)
-            JabberUser._db['S' + self._uid_str] = self._jid.encode('utf-8')
-            print 'user %s (id %d) created' % (self._jid.encode('iso8859-1', 'replace'), self._uid)
 
         self._res_ids = []
-        try:
-            res_str = JabberUser._db['R' + self._uid_str]
-            for i in range(0, len(res_str), 4):
-                self._res_ids.append(struct.unpack('>l', res_str[i:i + 4])[0])
-        except KeyError:
-            pass
-
+        cursor.execute('SELECT rid FROM user_resource WHERE uid=?',
+                       (self._uid,))
+        for row in cursor:
+            self._res_ids.append(row[0])
 
         self._stat_start = 0
         self._nr_headlines = []
         self._size_headlines = []
-        try:
-            stat_str = JabberUser._db['T' + self._uid_str]
-            if len(stat_str) >= 2:
-                self._stat_start = struct.unpack('>h', stat_str[0:2])[0]
-            for i in range(0, 8):
-                self._nr_headlines.append(struct.unpack('>H', stat_str[2 + 2*i:4 + 2*i])[0])
-                self._size_headlines.append(struct.unpack('>l', stat_str[18 + 4*i:22 + 4*i])[0])
-        except KeyError:
-            pass
+
+        cursor.execute('SELECT start, nr_msgs0, nr_msgs1, nr_msgs2, nr_msgs3, nr_msgs4, nr_msgs5, nr_msgs6, nr_msgs7, size_msgs0, size_msgs1, size_msgs2, size_msgs3, size_msgs4, size_msgs5, size_msgs6, size_msgs7 FROM user_stat WHERE uid=?',
+                       (self._uid,))
+        for row in cursor:
+            self._stat_start = row[0]
+            self._nr_headlines = list(row[1:9])
+            self._size_headlines = list(row[9:17])
 
         self._adjust_statistics()
 
-        JabberUser._db_sync.release()
-
-
-    def _commit_resources(self):
-        JabberUser._db_sync.acquire()
-        JabberUser._db['R' + self._uid_str] = string.join(map(lambda x: struct.pack('>l', x), self._res_ids), '')
-
-        if JabberUser._db_updates > 64:
-            JabberUser._db_updates = 0
-            JabberUser._db.reorganize()
-        else:
-            JabberUser._db_updates = JabberUser._db_updates + 1
-        JabberUser._db_sync.release()
 
     def _adjust_statistics(self):
         gmtime = time.gmtime()
@@ -565,13 +438,16 @@ class JabberUser:
         self._stat_start = new_stat_start
 
         if len(self._nr_headlines) < 8:
-            self._nr_headlines = self._nr_headlines + (8 - len(self._nr_headlines)) * [0]
+            self._nr_headlines += (8 - len(self._nr_headlines)) * [0]
         if len(self._size_headlines) < 8:
-            self._size_headlines = self._size_headlines + (8 - len(self._size_headlines)) * [0]
+            self._size_headlines += (8 - len(self._size_headlines)) * [0]
 
-    # precondition: db lock already acquired
-    def _commit_statistics(self):
-        JabberUser._db['T' + self._uid_str] = struct.pack('>h', self._stat_start) + string.join(map(lambda x: struct.pack('>H', x), self._nr_headlines), '') + string.join(map(lambda x: struct.pack('>l', x), self._size_headlines), '')
+    def _commit_statistics(self, cursor=None):
+        if cursor == None:
+            cursor = db.cursor()
+
+        cursor.execute('INSERT INTO user_stat (uid, start, nr_msgs0, nr_msgs1, nr_msgs2, nr_msgs3, nr_msgs4, nr_msgs5, nr_msgs6, nr_msgs7, size_msgs0, size_msgs1, size_msgs2, size_msgs3, size_msgs4, size_msgs5, size_msgs6, size_msgs7) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                       tuple([self._uid, self._stat_start] + self._nr_headlines + self._size_headlines))
 
 
     def uid(self):
@@ -643,9 +519,9 @@ class JabberUser:
         
 
     def _update_configuration(self):
-        JabberUser._db_sync.acquire()
-        JabberUser._db['U' + self._jid.encode('utf-8')] = self._uid_str + struct.pack('>lBB', self._configuration, self._store_messages, self._size_limit / 16)
-        JabberUser._db_sync.release()
+        cursor = db.cursor()
+        cursor.execute('UPDATE user SET conf=?, store_messages=?, size_limit=? WHERE uid=?',
+                       (self._configuration, self._store_messages, self._size_limit / 16))
 
     def set_configuration(self, conf, store_messages, size_limit):
         self._configuration = conf
@@ -718,10 +594,16 @@ class JabberUser:
     # @throws ValueError
     def add_resource(self, resource):
         res_id = resource.id()
-
         if res_id not in self._res_ids:
             self._res_ids.append(res_id)
-            self._commit_resources()
+
+            # also update storage res->uid mapping
+            res_uids = storage.get_resource_uids(resource)
+            res_uids.append(self.uid())
+
+            cursor = db.cursor()
+            cursor.execute('INSERT INTO user_resource (uid, rid) VALUES (?, ?)',
+                           (self._uid, res_id))
         else:
             raise ValueError(res_id)
 
@@ -729,48 +611,59 @@ class JabberUser:
     def remove_resource(self, resource):
         res_id = resource.id()
 
-        JabberUser._db_sync.acquire()
-        try:
-            del JabberUser._db['I' + self._uid_str + struct.pack('>l', res_id)]
-        except KeyError:
-            print 'KeyError: remove_resource(%d)' % (res_id,)
-        JabberUser._db_sync.release()
-
         self._res_ids.remove(res_id)
-        self._commit_resources()
+
+        # also update storage res->uid mapping
+        res_uids = storage.get_resource_uids(resource)
+        try:
+            res_uids.remove(self.uid())
+        except ValueError:
+            pass
+        if len(res_uids) == 0:
+            storage.evict_resource(resource)
+
+        cursor = db.cursor()
+        cursor.execute('DELETE FROM user_resource WHERE uid=? AND rid=?',
+                       (self._uid, res_id))
 
     def headline_id(self, resource):
-        JabberUser._db_sync.acquire()
-        try:
-            headline_id = struct.unpack('>l', JabberUser._db['I' + self._uid_str + struct.pack('>l', resource.id())])[0]
-        except:
-            headline_id = -1
-        JabberUser._db_sync.release()
+        cursor = db.cursor()
+        cursor.execute('SELECT seq_nr FROM user_resource WHERE uid=? AND rid=?',
+                       (self._uid, resource.id()))
+
+        headline_id = None
+        for row in cursor:
+            headline_id = row[0]
+
+        if headline_id == None:
+            headline_id = 0
 
         return headline_id
 
 
-    def update_headline(self, resource, headline_id, new_items=[]):
-        JabberUser._db_sync.acquire()
-        JabberUser._db['I' + self._uid_str + struct.pack('>l', resource.id())] = struct.pack('>l', headline_id)
+    def update_headline(self, resource, headline_id, new_items=[],
+                        cursor=None):
+        if cursor == None:
+            my_cursor = db.cursor()
+            my_cursor.execute('BEGIN')
+        else:
+            my_cursor = cursor
+
+        my_cursor.execute('UPDATE user_resource SET seq_nr=? WHERE uid=? AND rid=?',
+                          (headline_id, self._uid, resource.id()))
 
         if new_items:
             self._adjust_statistics()
-            self._nr_headlines[-1] = self._nr_headlines[-1] + len(new_items)
-            items_size = reduce(lambda x, y: (x[0] + len(y[0]),
-                                              x[1] + len(y[1]),
-                                              x[2] + len(y[2])),
-                                [(0, 0, 0)] + new_items)
-            items_size = reduce(lambda x, y: x + y, items_size)
-            self._size_headlines[-1] = self._size_headlines[-1] + items_size
-            self._commit_statistics()
+            self._nr_headlines[-1] += len(new_items)
+            items_size = reduce(lambda size, x: (size + len(x.title) +
+                                                 len(x.link) +
+                                                 len(x.descr_plain)),
+                                [0] + new_items)
+            self._size_headlines[-1] += items_size
+            self._commit_statistics(my_cursor)
 
-        if JabberUser._db_updates > 64:
-            JabberUser._db_updates = 0
-            JabberUser._db.reorganize()
-        else:
-            JabberUser._db_updates = JabberUser._db_updates + 1
-        JabberUser._db_sync.release()
+        if cursor == None:
+            my_cursor.execute('END')
 
 
 class JabberSessionEventHandler:
@@ -805,10 +698,15 @@ class JabberSessionEventHandler:
         for res_id in user.resources():
             resource = storage.get_resource_by_id(res_id)
             res_updated, res_modified, res_invalid = resource.times()
-            if res_invalid == 0:
+            if res_invalid == None:
                 reply_body.append(resource.url())
             else:
-                reply_body.append('%s (error)' % (resource.url(),))
+                error_info = resource.error_info()
+                if error_info:
+                    reply_body.append('%s (Error: %s)' % (resource.url(),
+                                                          error_info))
+                else:
+                    reply_body.append('%s (error)' % (resource.url(),))
 
         if reply_body:
             reply_body.sort()
@@ -905,17 +803,21 @@ class JabberSessionEventHandler:
 
 
     def _process_statistics(self, message, user):
+        cursor = db.cursor()
         reply_body = ['Statistics:']
 
-        JabberUser._db_sync.acquire()
-        users = JabberUser._db.keys()
-        JabberUser._db_sync.release()
-        total_users = len(filter(lambda u: u[0] == 'U', users))
+        cursor.execute('SELECT count(uid) FROM user')
 
-        storage._res_uids_db_sync.acquire()
-        res_uids = storage._res_uids_db.keys()
-        storage._res_uids_db_sync.release()
-        total_resources = len(filter(lambda r: r[0] == 'R', res_uids))
+        total_users = 0
+        for row in cursor:
+            total_users = row[0]
+
+        cursor = res_db.cursor()
+        cursor.execute('SELECT count(rid) FROM resource')
+
+        total_resources = 0
+        for row in cursor:
+            total_resources = row[0]
 
         reply_body.append('Users online/total: %d/%d' %
                           (len(storage._users) / 2, total_users))
@@ -979,13 +881,10 @@ class JabberSessionEventHandler:
                 try:
                     user.add_resource(resource)
 
-                    storage.add_resource_user(resource, user)
-                    new_items, headline_id = resource.get_headlines(-1)
-                    if headline_id >= 0:
-                        # suppress headline delivery
-                        user.update_headline(resource, headline_id, [])
-                    else:
-                        user.update_headline(resource, 0x7fffffff, [])
+                    new_items, headline_id = resource.get_headlines(0)
+                    # suppress headline delivery
+                    user.update_headline(resource, headline_id, [])
+                    # TODO
                 finally:
                     resource.unlock()
 
@@ -1019,9 +918,7 @@ class JabberSessionEventHandler:
                 try:
                     user.add_resource(resource)
 
-                    storage.add_resource_user(resource, user)
-
-                    new_items, headline_id = resource.get_headlines(-1)
+                    new_items, headline_id = resource.get_headlines(0)
                     if new_items:
                         self._send_headlines(self._jab_session, user, resource,
                                              new_items)
@@ -1055,7 +952,6 @@ class JabberSessionEventHandler:
                 resource.lock()
                 try:
                     user.remove_resource(resource)
-                    storage.remove_resource_user(resource, user)
                 finally:
                     resource.unlock()
 
@@ -1142,7 +1038,6 @@ class JabberSessionEventHandler:
             for res_id in user.resources():
                 resource = storage.get_resource_by_id(res_id)
                 user.remove_resource(resource)
-                storage.remove_resource_user(resource, user)
 
             storage.remove_user(user)
         except KeyError:
@@ -1190,7 +1085,6 @@ class JabberSessionEventHandler:
                 xmlns = None
 
             if xmlns == 'jabber:iq:roster':
-                JabberUser._db_sync.acquire()
                 subscribers = {}
                 for item in query.findElements('item'):
                     item.queryInterface(judoIConstElement)
@@ -1198,21 +1092,15 @@ class JabberSessionEventHandler:
                     jid = strip_resource(item.getAttrib('jid'))
                     subscription = item.getAttrib('subscription')
                     if subscription == 'both':
-                        try:
-                            del JabberUser._db['D' + jid.lower().encode('utf-8')]
-                            print 'unsubscribing inactive user "%s"' % (jid.encode('iso8859-1', 'replace'),)
-                            self._remove_user(jid)
-                        except KeyError:
-                            subscribers[jid.lower()] = None
+                        subscribers[jid.lower()] = True
                     else:
                         print 'subscription for user "%s" is "%s" (!= "both")' % (jid.encode('iso8859-1', 'replace'), subscription.encode('iso8859-1', 'replace'))
                         self._remove_user(jid)
 
-                u_keys = filter(lambda x: x[0] == 'U' and len(x) > 1, JabberUser._db.keys())
-                JabberUser._db_sync.release()
-
-                for u_key in u_keys:
-                    username = u_key[1:].decode('utf-8')
+                cursor = db.cursor()
+                cursor.execute('SELECT jid FROM user')
+                for row in cursor:
+                    username = row[0]
                     if not subscribers.has_key(username):
                         print 'user "%s" in database, but not subscribed to the service' % (username.encode('iso8859-1', 'replace'),)
                         self._delete_user(username)
@@ -1396,16 +1284,18 @@ class JabberSessionEventHandler:
         print 'sending', user.jid().encode('iso8859-1', 'replace'), resource.url()
         message_type = user.get_message_type()
 
+        channel_info = resource.channel_info()
+
         if message_type == 0 or message_type == 2:
             body = ''
 
             if not not_stored and (len(items) > user.get_store_messages()):
-                body = body + ('%d headlines suppressed (from %s)\n\n' % (len(items) - user.get_store_messages(), resource.channel_info()[0]))
+                body = body + ('%d headlines suppressed (from %s)\n\n' % (len(items) - user.get_store_messages(), channel_info.title))
                 items = items[-user.get_store_messages():]
 
             for item in items:
                 try:
-                    title, link, descr = item
+                    title, link, descr = (item.title, item.link, item.descr_plain)
                     
                     if (descr == '') or (descr == title):
                         body = body + ('%s\n%s\n\n' % (title, link))
@@ -1420,20 +1310,20 @@ class JabberSessionEventHandler:
             else:
                 mt = jabIConstMessage.mtChat
             message = jab_session.createMessage(user.jid(), body, mt)
-            message.setSubject(resource.channel_info()[0])
+            message.setSubject(channel_info.title)
             jab_session.sendPacket(message)
         elif message_type == 1:
             if not not_stored and (len(items) > user.get_store_messages()):
                 message = jab_session.createMessage(user.jid(),
                                                     '%d headlines suppressed' % (len(items) - user.get_store_messages(),),
                                                     jabIConstMessage.mtHeadline)
-                message.setSubject(resource.channel_info()[0])
+                message.setSubject(channel_info.title)
                 message.queryInterface(jabIPacket)
                 oob_ext = message.addExtension('oob')
                 oob_url = oob_ext.addElement('url')
-                oob_url.addCDATA(resource.channel_info()[1])
+                oob_url.addCDATA(channel_info.link)
                 oob_desc = oob_ext.addElement('desc')
-                oob_desc.addCDATA(resource.channel_info()[2])
+                oob_desc.addCDATA(channel_info.descr)
 
                 jab_session.sendPacket(message)
 
@@ -1441,7 +1331,7 @@ class JabberSessionEventHandler:
 
             for item in items:
                 try:
-                    title, link, descr = item
+                    title, link, descr = (item.title, item.link, item.descr_plain)
 
                     if descr:
                         description = descr
@@ -1451,7 +1341,7 @@ class JabberSessionEventHandler:
                     message = jab_session.createMessage(user.jid(),
                                                         description[:user.get_size_limit()],
                                                         jabIConstMessage.mtHeadline)
-                    message.setSubject(resource.channel_info()[0])
+                    message.setSubject(channel_info.title)
                     message.queryInterface(jabIPacket)
                     oob_ext = message.addExtension('oob')
                     oob_url = oob_ext.addElement('url')
@@ -1480,6 +1370,8 @@ class JabberSessionEventHandler:
         try:
             time.sleep(20)
             print 'starting RSS/RDF updater'
+            db = get_db()
+            res_db = RSS_Resource_db()
 
             self._update_queue_cond.acquire()
             while not self._shutdown:
@@ -1495,7 +1387,7 @@ class JabberSessionEventHandler:
                         del self._update_queue[0]
 
                         self._update_queue_cond.release()
-                        self._update_resource(resource, jab_session_proxy)
+                        self._update_resource(resource, jab_session_proxy, db, res_db)
                         self._update_queue_cond.acquire()
                 else:
                     print 'updater queue empty...'
@@ -1512,10 +1404,12 @@ class JabberSessionEventHandler:
             self._shutdown += 1
 
 
-    def _update_resource(self, resource, jab_session_proxy):
+    def _update_resource(self, resource, jab_session_proxy, db, res_db=None):
+        cursor = db.cursor()
+
         resource.lock(); need_unlock = 1
         try:
-            uids = storage.get_resource_uids(resource)
+            uids = storage.get_resource_uids(resource, cursor)
 
             storage.users_lock()
             try:
@@ -1536,12 +1430,13 @@ class JabberSessionEventHandler:
                 resource.unlock(); need_unlock = 0
                 try:
                     print time.asctime(), 'updating', resource.url()
-                    channel_info, new_items, last_item_id = resource.update()
+                    channel_info, new_items, last_item_id = resource.update(res_db)
 
                     if len(new_items) > 0:
                         need_unlock = 1
                         deliver_users = []
-                        uids = storage.get_resource_uids(resource)
+                        uids = storage.get_resource_uids(resource, cursor)
+                        cursor.execute('BEGIN')
                         for uid in uids:
                             try:
                                 user = storage.get_user_by_id(uid)
@@ -1549,7 +1444,7 @@ class JabberSessionEventHandler:
                                 if user.get_delivery_state():
                                     user.update_headline(resource,
                                                          last_item_id,
-                                                         new_items)
+                                                         new_items, cursor)
                                     deliver_users.append(user)
                             except KeyError:
                                 # just means that the user is no longer online
@@ -1559,6 +1454,7 @@ class JabberSessionEventHandler:
                         # prevent deadlock (the main thread, which is
                         # needed for sending, might be blocked waiting
                         # to acquire resource)
+                        cursor.execute('END')
                         resource.unlock(); need_unlock = 0
 
                         for user in deliver_users:
@@ -1677,23 +1573,5 @@ thread.start_new_thread(console_handler, (jab_session_proxy,))
 
 event_queue.eventLoop()
 
-
-try:
-    storage._res_uids_db.close()
-except:
-    print 'error closing DataStorage db'
-    traceback.print_exc(file=sys.stdout)
-
-try:
-    JabberUser._db.close()
-except:
-    print 'error closing JabberUser db'
-    traceback.print_exc(file=sys.stdout)
-
-try:
-    RSS_Resource._db.close()
-except:
-    print 'error closing RSS db'
-    traceback.print_exc(file=sys.stdout)
 
 print 'JabRSS shutdown complete'

@@ -16,8 +16,9 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
 # USA
 
-import codecs, gdbm, httplib, rfc822, os, random, re, socket, string, struct
-import sys, time, threading, traceback, zlib
+import codecs, httplib, md5, rfc822, os, random, re, socket, string, struct
+import sys, time, threading, traceback, types, zlib
+import apsw
 import xmllib
 
 
@@ -50,6 +51,13 @@ re_blank = re.compile('([ \\t\\n][ \\t\\n]+|[\x00\x0c\\t\\n])')
 re_spliturl = re.compile('^(?P<protocol>[a-z]+)://(?P<host>[^/]+)(?P<path>/?.*)$')
 
 random.seed()
+
+
+def RSS_Resource_db():
+    db = apsw.Connection('jabrss_res.db')
+    db.setbusytimeout(3000)
+
+    return db
 
 
 class UrlError(ValueError):
@@ -98,10 +106,32 @@ def normalize_text(s):
 
     return string.strip(s)
 
+def normalize_obj(o):
+    for attr in dir(o):
+        if attr[0] != '_':
+            value = getattr(o, attr)
+            if type(value) in types.StringTypes:
+                setattr(o, attr, normalize_text(value))
+
+    return o
+
+def normalize_item(item):
+    normalize_obj(item)
+
+    if not hasattr(item, 'descr_plain'):
+        item.descr_plain = item.descr
+
+    if not hasattr(item, 'descr_xhtml'):
+        item.descr_xhtml = None
+
+    del item.descr
+
+    return item
+
 
 def compare_items(l, r):
-    ltitle, llink = l[0:2]
-    rtitle, rlink = r[0:2]
+    ltitle, llink = (l.title, l.link)
+    rtitle, rlink = (r.title, r.link)
 
     if ltitle == rtitle:
         lmo = re_spliturl.match(llink)
@@ -143,6 +173,19 @@ def compare_items(l, r):
         return 0
 
 
+class Resource_Guard:
+    def __init__(self, cleanup_handler):
+        self._cleanup_handler = cleanup_handler
+
+    def __del__(self):
+        self._cleanup_handler()
+
+class Data:
+    def __init__(self, **kw):
+        for key, value in kw.items():
+            setattr(self, key, value)
+
+
 class DecompressorError(ValueError):
     pass
 
@@ -152,6 +195,18 @@ class Null_Decompressor:
 
     def flush(self):
         return ''
+
+
+class Deflate_Decompressor:
+    def __init__(self):
+        self._decompress = zlib.decompressobj()
+
+    def feed(self, s):
+        print repr(s)
+        return self._decompress.decompress(s)
+
+    def flush(self):
+        return self._decompress.flush()
 
 
 class Gzip_Decompressor:
@@ -415,7 +470,7 @@ class Feed_Parser(xmllib.XMLParser):
         self._content_mode = None
         self._summary = None
 
-        self._channel = ['', '', '']
+        self._channel = Data(title='', link='', descr='')
         self._items = []
 
     def handle_xml(self, encoding, standalone):
@@ -618,7 +673,7 @@ class Feed_Parser(xmllib.XMLParser):
 
     def rss_item_start(self, attrs):
         self._state = self._state | 0x08
-        self._items.append(['', '', ''])
+        self._items.append(Data(title='', link='', descr=''))
 
     def rss_item_end(self):
         self._state = self._state & ~0x08
@@ -632,7 +687,7 @@ class Feed_Parser(xmllib.XMLParser):
         if self._state & 0xfc:
             elem = self._current_elem()
             if elem != None:
-                elem[0] = self._cdata
+                elem.title = self._cdata
 
         self._cdata = None
 
@@ -645,7 +700,7 @@ class Feed_Parser(xmllib.XMLParser):
         if self._state & 0xfc:
             elem = self._current_elem()
             if elem != None:
-                elem[1] = self._cdata
+                elem.link = self._cdata
 
         self._cdata = None
 
@@ -658,18 +713,18 @@ class Feed_Parser(xmllib.XMLParser):
         if self._state & 0xfc:
             elem = self._current_elem()
             if elem != None:
-                elem[2] = self._cdata
+                elem.descr = self._cdata
 
         self._cdata = None
 
 
     def atom_entry_start(self, attrs):
         self._state = (self._state & ~0x04) | 0x08
-        self._items.append(['', '', ''])
+        self._items.append(Data(title='', link='', descr=''))
 
     def atom_entry_end(self):
-        if self._items[-1][2] == '' and self._summary:
-            self._items[-1][2] = self._summary
+        if self._items[-1].descr == '' and self._summary:
+            self._items[-1].descr = self._summary
 
         self._state = (self._state & ~0x08) | 0x04
 
@@ -682,7 +737,7 @@ class Feed_Parser(xmllib.XMLParser):
         if self._state & 0xfc:
             elem = self._current_elem()
             if elem != None:
-                elem[0] = self._cdata
+                elem.title = self._cdata
 
         self._cdata = None
 
@@ -692,11 +747,11 @@ class Feed_Parser(xmllib.XMLParser):
         if elem == None:
             return
 
-        if elem[1] and attrs.has_key('http://purl.org/atom/ns# type') and (attrs['http://purl.org/atom/ns# type'] != 'text/html'):
+        if elem.link and attrs.has_key('http://purl.org/atom/ns# type') and (attrs['http://purl.org/atom/ns# type'] != 'text/html'):
             return
 
         if attrs.has_key('http://purl.org/atom/ns# href'):
-            elem[1] = attrs['http://purl.org/atom/ns# href']
+            elem.link = attrs['http://purl.org/atom/ns# href']
 
     def atom_link_end(self):
         pass
@@ -714,7 +769,7 @@ class Feed_Parser(xmllib.XMLParser):
                 self._cdata = self._cdata.decode('base64')
             elem = self._current_elem()
             if elem != None:
-                elem[2] = self._cdata
+                elem.descr = self._cdata
 
         self._cdata = None
         self._content_mode = None
@@ -732,7 +787,7 @@ class Feed_Parser(xmllib.XMLParser):
                 self._cdata = self._cdata.decode('base64')
             elem = self._current_elem()
             if elem != None and elem != '':
-                elem[2] = self._cdata
+                elem.descr = self._cdata
 
         self._cdata = None
         self._content_mode = None
@@ -837,18 +892,9 @@ class Feed_Parser(xmllib.XMLParser):
 class RSS_Resource:
     NR_ITEMS = 48
 
-    _db = gdbm.open('jabrss_urls.db', 'c')
-    _db.reorganize()
-    _db_updates = 0
-    _db_sync = threading.Lock()
-
+    _db = RSS_Resource_db()
     _rename_cb = None
     http_proxy = None
-
-    try:
-        _seq_nr = struct.unpack('>l', _db['S'])[0]
-    except:
-        _seq_nr = 0
 
 
     def __init__(self, url):
@@ -856,49 +902,46 @@ class RSS_Resource:
         self._url = url
         self._url_protocol, self._url_host, self._url_path = split_url(url)
 
-        RSS_Resource._db_sync.acquire()
-        try:
-            self._id_str = RSS_Resource._db['R' + self._url]
-            self._id = struct.unpack('>l', self._id_str)[0]
-        except KeyError:
-            RSS_Resource._seq_nr += 1
-            RSS_Resource._db['S'] = struct.pack('>l', RSS_Resource._seq_nr)
-            self._id = RSS_Resource._seq_nr
-            self._id_str = struct.pack('>l', self._id)
-            RSS_Resource._db['R' + self._url] = self._id_str
-            RSS_Resource._db['S' + self._id_str] = self._url
+        db = RSS_Resource._db
+        cursor = db.cursor()
+
+        self._last_updated, self._last_modified = (None, None)
+        self._etag = None
+        self._invalid_since, self._err_info = (None, None)
+        self._penalty = 0
+        title, description, link = (None, None, None)
 
         try:
-            times_str = RSS_Resource._db['T' + self._id_str]
-        except KeyError:
-            times_str = ''
+            cursor.execute('SELECT rid, last_updated, last_modified, etag, invalid_since, penalty, err_info, title, description, link FROM resource WHERE URL=?',
+                           (self._url,))
+            self._id, self._last_updated, self._last_modified, self._etag, self._invalid_since, self._penalty, self._err_info, title, description, link = cursor.next()
+        except StopIteration:
+            cursor.execute('INSERT INTO resource (url) VALUES (?)',
+                           (self._url,))
+            self._id = db.last_insert_rowid()
 
-        if len(times_str) == 8:
-            self._last_modified, self._last_updated = struct.unpack('>ll', times_str)
-            self._invalid_since = 0
-        elif len(times_str) == 12:
-            self._last_modified, self._last_updated, self._invalid_since = struct.unpack('>lll', times_str)
-        else:
-            self._last_modified = 0
+        if self._last_updated == None:
             self._last_updated = 0
-            self._invalid_since = 0
 
-        try:
-            self._channel_info = tuple(string.split(RSS_Resource._db['I' + self._id_str].decode('utf-8'), '\0'))
-        except KeyError:
-            self._channel_info = ('', '', '')
+        if self._penalty == None:
+            self._penalty = 0
+
+        if title == None:
+            title = self._url
+        if link == None:
+            link = ''
+        if description == None:
+            description = ''
+
+        self._channel_info = Data(title=title, link=link, descr=description)
 
         self._history = []
-        try:
-            history_str = RSS_Resource._db['H' + self._id_str]
-            self._first_item_id = struct.unpack('>l', history_str[0:4])[0]
-            for i in range(4, len(history_str), 8):
-                self._history.append(struct.unpack('>ll',
-                                                   history_str[i:i + 8]))
-        except KeyError:
-            self._first_item_id = 0
-
-        RSS_Resource._db_sync.release()
+        cursor.execute('SELECT time_items0, time_items1, time_items2, time_items3, time_items4, time_items5, time_items6, time_items7, time_items8, time_items9, time_items10, time_items11, time_items12, time_items13, time_items14, time_items15, nr_items0, nr_items1, nr_items2, nr_items3, nr_items4, nr_items5, nr_items6, nr_items7, nr_items8, nr_items9, nr_items10, nr_items11, nr_items12, nr_items13, nr_items14, nr_items15 FROM resource_history WHERE rid=?',
+                       (self._id,))
+        for row in cursor:
+            history_times = filter(lambda x: x!=None, row[0:16])
+            history_nr = filter(lambda x: x!=None, row[16:32])
+            self._history = zip(history_times, history_nr)
 
 
     def lock(self):
@@ -918,38 +961,43 @@ class RSS_Resource:
         return self._channel_info
 
     def times(self):
-        return (self._last_updated, self._last_modified, self._invalid_since)
+        last_updated, last_modified, invalid_since = (self._last_updated, self._last_modified, self._invalid_since)
+        if last_modified == None:
+            last_modified = 0
+    
+        return (last_updated, last_modified, invalid_since)
 
     def error_info(self):
-        error_info = None
-
-        if self._invalid_since:
-            RSS_Resource._db_sync.acquire()
-            try:
-                error_info = RSS_Resource._db['E' + self._id_str].decode('utf-8')
-            except KeyError:
-                pass
-            RSS_Resource._db_sync.release()
-
-        return error_info
+        return self._err_info
 
 
     def history(self):
         return self._history
 
 
-    # @return (channel_info, new_items, last_item_id)
+    # @return (channel_info, new_items, next_item_id)
     # locks the resource object if new_items are returned
-    def update(self):
+    def update(self, db=None):
         error_info = None
         nr_new_items = 0
+        feed_xml_downloaded = False
+        feed_xml_changed = False
+        first_item_id = None
         items = []
 
         self._last_updated = int(time.time())
 
-        if self._invalid_since == 0:
+        if self._invalid_since == None:
             # expect the worst, will be reset later
             self._invalid_since = self._last_updated
+
+
+        if db == None:
+            db = RSS_Resource_db()
+
+        cursor = db.cursor()
+        db_txn_end = None
+
 
         try:
             redirect_tries = 5
@@ -962,9 +1010,11 @@ class RSS_Resource:
                 if redirect_permanent:
                     simple_url = url_protocol + '://' + url_host + url_path
                     if simple_url != self._url:
-                        RSS_Resource._db_sync.acquire()
-                        merge_needed = RSS_Resource._db.has_key('R' + simple_url)
-                        RSS_Resource._db_sync.release()
+                        merge_needed = False
+                        cursor.execute('SELECT rid FROM resource WHERE url=?',
+                                       (simple_url,))
+                        for rid in cursor:
+                            merge_needed = True
 
                         if merge_needed:
                             print 'permanent redirect: %s -> %s (merge needed)' % (self._url.encode('iso8859-1', 'replace'), simple_url.encode('iso8859-1', 'replace'))
@@ -972,15 +1022,12 @@ class RSS_Resource:
                             print 'permanent redirect: %s -> %s' % (self._url.encode('iso8859-1', 'replace'), simple_url.encode('iso8859-1', 'replace'))
 
                             if RSS_Resource._rename_cb:
-                                RSS_Resource._db_sync.acquire()
                                 RSS_Resource._rename_cb(self._url, simple_url)
 
-                                RSS_Resource._db['S' + self._id_str] = simple_url
-                                RSS_Resource._db['R' + simple_url] = self._id_str
-                                del RSS_Resource._db['R' + self._url]
+                                cursor.execute('UPDATE resource SET url=? WHERE rid=?',
+                                               (simple_url, self._id))
                                 self._url = simple_url
                                 self._url_protocol, self._url_host, self._url_path = (url_protocol, url_host, url_path)
-                                RSS_Resource._db_sync.release()
 
 
                 if RSS_Resource.http_proxy:
@@ -1003,22 +1050,39 @@ class RSS_Resource:
                     h.putheader('Host', url_host)
                 h.putheader('Pragma', 'no-cache')
                 h.putheader('Cache-Control', 'no-cache')
-                h.putheader('Accept-Encoding', 'gzip')
+                h.putheader('Accept-Encoding', 'deflate, gzip')
                 h.putheader('User-Agent', 'jabrss (http://JabXPCOM.sunsite.dk/jabrss/)')
-                if self._last_modified > 0:
+                if self._last_modified:
                     h.putheader('If-Modified-Since',
                                 rfc822.formatdate(self._last_modified))
+                if self._etag != None:
+                    h.putheader('If-None-Match', self._etag)
                 h.endheaders()
                 errcode, errmsg, headers = h.getreply()
 
                 # check the error code
                 if (errcode >= 200) and (errcode < 300):
+                    feed_xml_downloaded = True
+
+                    try:
+                        self._last_modified = rfc822.mktime_tz(rfc822.parsedate_tz(headers['last-modified']))
+                    except:
+                        self._last_modified = None
+
+                    try:
+                        self._etag = headers['etag']
+                    except:
+                        self._etag = None
+
                     content_encoding = headers.get('content-encoding', None)
                     transfer_encoding = headers.get('transfer-encoding', None)
 
                     if (content_encoding == 'gzip') or (transfer_encoding == 'gzip'):
                         print 'gzip-encoded data'
                         decoder = Gzip_Decompressor()
+                    elif (content_encoding == 'deflate') or (transfer_encoding == 'deflate'):
+                        print 'deflate-encoded data'
+                        decoder = Deflate_Decompressor()
                     else:
                         decoder = Null_Decompressor()
 
@@ -1028,19 +1092,21 @@ class RSS_Resource:
                     bytes_received = 0
                     bytes_processed = 0
                     xml_started = 0
+                    file_hash = md5.new()
 
                     l = f.read(4096)
                     while l:
-                        if not xml_started:
-                            l = string.lstrip(l)
-                            if l:
-                                xml_started = 1
-
                         bytes_received = bytes_received + len(l)
                         if bytes_received > 48 * 1024:
                             raise ValueError('file exceeds maximum allowed size')
 
                         data = decoder.feed(l)
+                        file_hash.update(data)
+
+                        if not xml_started:
+                            data = string.lstrip( data)
+                            if data:
+                                xml_started = 1
 
                         bytes_processed = bytes_processed + len(data)
                         if bytes_processed > 96 * 1024:
@@ -1050,34 +1116,56 @@ class RSS_Resource:
 
                         l = f.read(4096)
 
-                    rss_parser.feed(decoder.flush())
+                    data = decoder.flush()
+                    file_hash.update(data)
+                    rss_parser.feed(data)
                     rss_parser.close()
-                    new_channel_info = tuple(map(normalize_text,
-                                                 rss_parser._channel))
-                    RSS_Resource._db_sync.acquire()
+                    new_channel_info = normalize_obj(rss_parser._channel)
+
+                    db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
+                    cursor.execute('BEGIN')
+
+                    hash_buffer = buffer(file_hash.digest())
+                    cursor.execute('UPDATE resource SET hash=? WHERE rid=? AND (hash IS NULL OR hash<>?)',
+                                   (hash_buffer, self._id, hash_buffer))
+                    feed_xml_changed = (db.changes() != 0)
+
                     if self._channel_info != new_channel_info:
                         self._channel_info = new_channel_info
-                        RSS_Resource._db['I' + self._id_str] = string.join(self._channel_info, '\0').encode('utf-8')
 
-                    try:
-                        items = map(lambda x: tuple(string.split(x, '\0')), string.split(RSS_Resource._db['D' + self._id_str].decode('utf-8'), '\014'))
-                    except KeyError:
-                        items = []
-                    RSS_Resource._db_sync.release()
+                        cursor.execute('UPDATE resource SET title=?, link=?, description=? WHERE rid=?',
+                                       (self._channel_info.title,
+                                        self._channel_info.link,
+                                        self._channel_info.descr,
+                                        self._id))
 
+                    items = []
+                    first_item_id = None
+                    cursor.execute('SELECT seq_nr, published, title, link, descr_plain, descr_xhtml FROM resource_data WHERE rid=? ORDER BY seq_nr',
+                                   (self._id,))
+                    for seq_nr, published, title, link, descr_plain, descr_xhtml in cursor:
+                        items.append(Data(published=published,
+                                          title=title, link=link,
+                                          descr_plain=descr_plain,
+                                          descr_xhtml=descr_xhtml))
+
+                        if first_item_id == None or seq_nr < first_item_id:
+                            first_item_id = seq_nr
+
+                    if first_item_id == None:
+                        first_item_id = 0
                     nr_old_items = len(items)
 
-                    new_items = map(lambda x: map(normalize_text, x),
+                    new_items = map(lambda x: normalize_item(x),
                                     rss_parser._items[:RSS_Resource.NR_ITEMS])
                     new_items.reverse()
                     for item in new_items:
-                        item = tuple(item)
-                        found = 0
+                        found = False
 
                         for i in range(0, nr_old_items):
                             if compare_items(items[i], item):
                                 items[i] = item
-                                found = 1
+                                found = True
 
                         if not found:
                             items.append(item)
@@ -1087,38 +1175,45 @@ class RSS_Resource:
                         self.lock()
 
                     if len(items) > RSS_Resource.NR_ITEMS:
-                        self._first_item_id += len(items) - RSS_Resource.NR_ITEMS
+                        first_item_id += len(items) - RSS_Resource.NR_ITEMS
                         del items[:-RSS_Resource.NR_ITEMS]
-
-                    try:
-                        self._last_modified = rfc822.mktime_tz(rfc822.parsedate_tz(headers['last-modified']))
-                    except:
-                        self._last_modified = 0
+                        cursor.execute('DELETE FROM resource_data WHERE rid=? AND seq_nr<?',
+                                       (self._id, first_item_id))
 
                     # RSS resource is valid
-                    self._invalid_since = 0
+                    self._invalid_since = None
 
                     if nr_new_items:
                         # update history information
                         self._history.append((int(time.time()), nr_new_items))
                         self._history = self._history[-16:]
 
-                        RSS_Resource._db_sync.acquire()
-                        RSS_Resource._db['D' + self._id_str] = string.join(map(lambda x: string.join(x, '\0'), items), '\014').encode('utf-8')
-                        RSS_Resource._db['H' + self._id_str] = struct.pack('>l', self._first_item_id) + string.join(map(lambda x: struct.pack('>ll', x[0], x[1]), self._history), '')
+                        history_times = map(lambda x: x[0], self._history)
+                        if len(history_times) < 16:
+                            history_times += (16 - len(history_times)) * [None]
 
-                        if RSS_Resource._db_updates > 256:
-                            RSS_Resource._db_updates = 0
-                            RSS_Resource._db.reorganize()
-                        else:
-                            RSS_Resource._db_updates = RSS_Resource._db_updates + 1
-                        RSS_Resource._db_sync.release()
+                        history_nr = map(lambda x: x[1], self._history)
+                        if len(history_nr) < 16:
+                            history_nr += (16 - len(history_nr)) * [None]
 
-                # handle "301 Moved Permanently", "302 Found" and
-                # "307 Temporary Redirect"
+                        cursor.execute('INSERT INTO resource_history (rid, time_items0, time_items1, time_items2, time_items3, time_items4, time_items5, time_items6, time_items7, time_items8, time_items9, time_items10, time_items11, time_items12, time_items13, time_items14, time_items15, nr_items0, nr_items1, nr_items2, nr_items3, nr_items4, nr_items5, nr_items6, nr_items7, nr_items8, nr_items9, nr_items10, nr_items11, nr_items12, nr_items13, nr_items14, nr_items15) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                                       tuple([self._id] + history_times + history_nr))
+
+                        i = first_item_id
+                        for item in items:
+                            cursor.execute('INSERT INTO resource_data (rid, seq_nr, title, link, descr_plain, descr_xhtml) VALUES (?, ?, ?, ?, ?, ?)',
+                                           (self._id, i,
+                                            item.title, item.link,
+                                            item.descr_plain,
+                                            item.descr_xhtml))
+                            i += 1
+
+                # handle "304 Not Modified"
                 elif errcode == 304:
                     # RSS resource is valid
-                    self._invalid_since = 0
+                    self._invalid_since = None
+                # handle "301 Moved Permanently", "302 Found" and
+                # "307 Temporary Redirect"
                 elif (errcode >= 300) and (errcode < 400):
                     if errcode != 301:
                         redirect_permanent = 0
@@ -1164,38 +1259,64 @@ class RSS_Resource:
         if error_info:
             print 'Error: %s' % (error_info,)
 
-        RSS_Resource._db_sync.acquire()
-        if error_info:
-            RSS_Resource._db['E' + self._id_str] = error_info.encode('utf-8')
-        else:
-            try:
-                del RSS_Resource._db['E' + self._id_str]
-            except KeyError:
-                pass
-        RSS_Resource._db['T' + self._id_str] = struct.pack('>lll', self._last_modified, self._last_updated, self._invalid_since)
-        RSS_Resource._db_sync.release()
+        if db_txn_end == None:
+            db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
+            cursor.execute('BEGIN')
+
+        if error_info != self._err_info:
+            self._err_info = error_info
+            cursor.execute('UPDATE resource SET err_info=? WHERE rid=?',
+                           (self._err_info, self._id))
+
+        if self._invalid_since != 0:
+            if feed_xml_downloaded:
+                if nr_new_items > 0:
+                    # downloaded and new items available, good
+                    self._penalty = (5 * self._penalty) / 6
+                elif not feed_xml_changed:
+                    # downloaded, but not changed, very bad
+                    self._penalty = (3 * self._penalty) / 4 + 256
+                else:
+                    # downloaded and changed, but no new items, bad
+                    self._penalty = (15 * self._penalty) / 16 + 64
+            else:
+                # "not modified" response from server, good
+                self._penalty = (3 * self._penalty) / 4
+
+        cursor.execute('UPDATE resource SET last_modified=?, last_updated=?, etag=?, invalid_since=?, penalty=? WHERE rid=?',
+                       (self._last_modified, self._last_updated, self._etag,
+                        self._invalid_since, self._penalty, self._id))
+
         if nr_new_items:
-            return self._channel_info, items[-nr_new_items:], self._first_item_id + len(items) - 1
+            return self._channel_info, items[-nr_new_items:], first_item_id + len(items)
         else:
-            return self._channel_info, [], self._first_item_id + len(items) - 1
+            return self._channel_info, [], None
 
 
+    # @return (new items, next id)
     def get_headlines(self, first_id):
-        RSS_Resource._db_sync.acquire()
-        try:
-            items = map(lambda x: tuple(string.split(x, '\0')), string.split(RSS_Resource._db['D' + self._id_str].decode('utf-8'), '\014'))
-        except KeyError:
-            items = []
-        RSS_Resource._db_sync.release()
+        cursor = RSS_Resource._db.cursor()
 
-        last_id = self._first_item_id + len(items) - 1
-        if first_id >= self._first_item_id:
-            items = items[first_id + 1 - self._first_item_id:]
+        if first_id == None:
+            first_id = 0
+
+        cursor.execute('SELECT seq_nr, published, title, link, descr_plain, descr_xhtml FROM resource_data WHERE rid=? AND seq_nr>=? ORDER BY seq_nr',
+                       (self._id, first_id))
+        items = []
+        last_id = first_id
+        for seq_nr, published, title, link, descr_plain, descr_xhtml in cursor:
+            if seq_nr >= last_id:
+                last_id = seq_nr + 1
+            items.append(Data(title=title, link=link, descr_plain=descr_plain,
+                              descr_xhtml=descr_xhtml))
 
         return items, last_id
 
 
-    def next_update(self, randomize=1):
+    def next_update(self, randomize=True):
+        min_interval = 45*60
+        max_interval = 24*60*60
+
         if len(self._history) >= 2:
             hist_items = len(self._history)
 
@@ -1215,24 +1336,34 @@ class RSS_Resource:
                     time_span = time_span - time_span_old
                     sum_items = sum_items - sum_items_old
 
-            interval = min(24*60*60,
-                           max(30*60, time_span / sum_items / 3))
+            interval = time_span / sum_items / 3
+
+            # apply a bonus for well-behaved feeds
+            interval = 32 * interval / (64 - self._penalty / 28)
+            max_interval = 32 * max_interval / (64 - self._penalty / 28)
+            min_interval = 32 * min_interval / (48 - self._penalty / 64)
         elif len(self._history) == 1:
             time_span = self._last_updated - self._history[0][0]
 
-            interval = min(24*60*60, max(60*60, 30*60 + time_span / 3))
+            interval = 30*60 + time_span / 3
+            min_interval = 60*60
         elif self._invalid_since:
             time_span = self._last_updated - self._invalid_since
 
-            interval = min(48*60*60, 4*60*60 + time_span / 4)
+            interval = 4*60*60 + time_span / 4
+            max_interval = 48*60*60
         else:
             interval = 8*60*60
 
         if string.find(string.lower(self._url), 'slashdot.org') != -1:
             # yes, slashdot sucks - this is a special slashdot
             # throttle to avaoid being banned by slashdot
-            interval = interval + 180*60
+            interval = interval + 150*60
 
+        # apply upper and lower bounds to the interval
+        interval = min(max_interval, max(min_interval, interval))
+
+        # and add some random factor
         if randomize:
             return self._last_updated + interval + int(random.normalvariate(30, 50 + interval / 50))
         else:
@@ -1240,9 +1371,16 @@ class RSS_Resource:
 
 
 def RSS_Resource_id2url(res_id):
-    RSS_Resource._db_sync.acquire()
-    url = RSS_Resource._db['S' + struct.pack('>l', res_id)]
-    RSS_Resource._db_sync.release()
+    cursor = RSS_Resource._db.cursor()
+
+    url = None
+    cursor.execute('SELECT url FROM resource WHERE rid=?',
+                   (res_id,))
+    for row in cursor:
+        url = row[0]
+
+    if url == None:
+        raise KeyError(res_id)
 
     return url
 
@@ -1261,6 +1399,7 @@ if __name__ == '__main__':
     if len(sys.argv) >= 2:
         resource = RSS_Resource(sys.argv[1])
 
-    channel_info, new_items, last_item_id = resource.update()
-    if len(new_items) > 0:
-        print 'new items', new_items
+        channel_info, new_items, next_item_id = resource.update()
+        print channel_info.title, channel_info.link, channel_info.descr
+        if len(new_items) > 0:
+            print 'new items', map(lambda x: (x.title, x.link), new_items), next_item_id

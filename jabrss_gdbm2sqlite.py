@@ -89,11 +89,11 @@ def convert_users(conn):
         for res in res_ids:
             #  'I' + user_id + resource_id -> headline_id (4-byte struct)
             try:
-                seq_nr = struct.unpack('>L', db['I' + s_key + res])[0]
+                seq_nr = struct.unpack('>L', db['I' + s_key + res])[0] + 1
             except KeyError:
                 seq_nr = None
 
-            cursor.execute('INSERT INTO user_resources(uid, rid, seq_nr) VALUES (?, ?, ?)',
+            cursor.execute('INSERT INTO user_resource(uid, rid, seq_nr) VALUES (?, ?, ?)',
                            (uid, struct.unpack('>L', res)[0], seq_nr))
 
 
@@ -121,7 +121,7 @@ def convert_users(conn):
             for i in range(0, len(stat_list) / 2):
                 stat_fields += (', nr_msgs%d, size_msgs%d' % (i, i))
 
-            cursor.execute('INSERT INTO user_stats(uid, start' + stat_fields + ') VALUES (?, ?' + len(stat_list) * ', ?' + ')',
+            cursor.execute('INSERT INTO user_stat(uid, start' + stat_fields + ') VALUES (?, ?' + len(stat_list) * ', ?' + ')',
                            tuple([uid, stat_start] + stat_list))
         except KeyError:
             pass
@@ -194,14 +194,14 @@ def convert_resources(conn):
                 res_history += list(struct.unpack('>ll',
                                                   history_str[i:i + 8]))
         except KeyError:
-            res_seq_nr = None
+            res_seq_nr = 0
 
         fields_history = ''
         for i in range(0, len(res_history)/2):
             fields_history += ', time_items%d, nr_items%d' % (i, i)
 
-        cursor.execute('INSERT INTO res.resource (rid, url, seq_nr, last_updated, last_modified, invalid_since, err_info, title, description, link) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                       (rid, url, res_seq_nr, res_last_updated, res_last_modified, res_invalid_since, res_error, res_title, res_link, res_descr))
+        cursor.execute('INSERT INTO res.resource (rid, url, last_updated, last_modified, invalid_since, err_info, title, description, link) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                       (rid, url, res_last_updated, res_last_modified, res_invalid_since, res_error, res_title, res_link, res_descr))
 
         cursor.execute('INSERT INTO res.resource_history (rid' + fields_history + ') VALUES (?' + len(res_history) * ', ?' + ')',
                        [rid] + res_history)

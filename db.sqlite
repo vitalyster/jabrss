@@ -25,37 +25,37 @@ CREATE TABLE user (
     UNIQUE (jid)
 );
 
-CREATE TABLE user_stats (
+CREATE TABLE user_stat (
     uid INTEGER NOT NULL,
     start INTEGER NOT NULL, -- day of year
-    nr_msgs0 SMALLINT,
-    size_msgs0 SMALLINT,
-    nr_msgs1 SMALLINT,
-    size_msgs1 SMALLINT,
-    nr_msgs2 SMALLINT,
-    size_msgs2 SMALLINT,
-    nr_msgs3 SMALLINT,
-    size_msgs3 SMALLINT,
-    nr_msgs4 SMALLINT,
-    size_msgs4 SMALLINT,
-    nr_msgs5 SMALLINT,
-    size_msgs5 SMALLINT,
-    nr_msgs6 SMALLINT,
-    size_msgs6 SMALLINT,
-    nr_msgs7 SMALLINT,
-    size_msgs7 SMALLINT,
-    UNIQUE (uid)
+    nr_msgs0 SMALLINT NOT NULL DEFAULT 0,
+    size_msgs0 SMALLINT NOT NULL DEFAULT 0,
+    nr_msgs1 SMALLINT NOT NULL DEFAULT 0,
+    size_msgs1 SMALLINT NOT NULL DEFAULT 0,
+    nr_msgs2 SMALLINT NOT NULL DEFAULT 0,
+    size_msgs2 SMALLINT NOT NULL DEFAULT 0,
+    nr_msgs3 SMALLINT NOT NULL DEFAULT 0,
+    size_msgs3 SMALLINT NOT NULL DEFAULT 0,
+    nr_msgs4 SMALLINT NOT NULL DEFAULT 0,
+    size_msgs4 SMALLINT NOT NULL DEFAULT 0,
+    nr_msgs5 SMALLINT NOT NULL DEFAULT 0,
+    size_msgs5 SMALLINT NOT NULL DEFAULT 0,
+    nr_msgs6 SMALLINT NOT NULL DEFAULT 0,
+    size_msgs6 SMALLINT NOT NULL DEFAULT 0,
+    nr_msgs7 SMALLINT NOT NULL DEFAULT 0,
+    size_msgs7 SMALLINT NOT NULL DEFAULT 0,
+    UNIQUE (uid) ON CONFLICT REPLACE
 );
 
-CREATE TABLE user_resources (
+CREATE TABLE user_resource (
     uid INTEGER NOT NULL,
     rid INTEGER NOT NULL,
     seq_nr INTEGER,
-    UNIQUE (uid, rid)
+    UNIQUE (uid, rid) ON CONFLICT REPLACE
 );
 
-CREATE INDEX user_resources_rid ON
-    user_resources (rid);
+CREATE INDEX user_resource_rid ON
+    user_resource (rid);
 
 
 ATTACH DATABASE "jabrss_res.db" AS res;
@@ -63,10 +63,12 @@ ATTACH DATABASE "jabrss_res.db" AS res;
 CREATE TABLE res.resource (
     rid INTEGER PRIMARY KEY,
     url TEXT NOT NULL,
-    seq_nr INTEGER,
     last_updated INTEGER, -- UNIX timestamp
     last_modified INTEGER, -- UNIX timestamp
+    etag TEXT,
+    hash BLOB,
     invalid_since INTEGER, -- UNIX timestamp
+    penalty INTEGER NOT NULL DEFAULT 0, -- 1024-based (1024 = 1.0)
     err_info TEXT,
     title TEXT,
     description TEXT,
@@ -108,7 +110,7 @@ CREATE TABLE res.resource_history (
     nr_items14 SMALLINT,
     time_items15 INTEGER,
     nr_items15 SMALLINT,
-    UNIQUE (rid)
+    UNIQUE (rid) ON CONFLICT REPLACE
 );
 
 CREATE TABLE res.resource_data (
@@ -119,5 +121,5 @@ CREATE TABLE res.resource_data (
     link TEXT,
     descr_plain TEXT,
     descr_xhtml TEXT,
-    UNIQUE (rid, seq_nr)
+    UNIQUE (rid, seq_nr) ON CONFLICT REPLACE
 );
