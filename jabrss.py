@@ -641,17 +641,18 @@ class JabberSessionEventHandler:
         self._jab_session.sendPacket(reply)
 
     def _process_list(self, message, user):
-        reply_body = ''
+        reply_body = []
         for res_id in user.resources():
             resource = storage.get_resource_by_id(res_id)
             res_updated, res_modified, res_invalid = resource.times()
             if res_invalid == 0:
-                reply_body = reply_body + ('%s\n' % (resource.url()))
+                reply_body.append(resource.url())
             else:
-                reply_body = reply_body + ('%s (error)\n' % (resource.url()))
+                reply_body.append('%s (error)' % (resource.url(),))
 
-        if reply_body != '':
-            reply = message.reply(reply_body)
+        if reply_body:
+            reply_body.sort()
+            reply = message.reply(string.join(reply_body, '\n'))
         else:
             reply = message.reply('Sorry, you are currently not subscribed to any RSS feeds.')
         self._jab_session.sendPacket(reply)
