@@ -188,6 +188,8 @@ class DataStorage:
 
     def add_resource_user(self, resource, user):
         res_uids = self.get_resource_uids(resource)
+        if res_uids == []:
+            self._res_uids[resource.id()] = res_uids
         res_uids.append(user.uid())
 
         self._res_uids_db_sync.acquire()
@@ -299,6 +301,15 @@ class DataStorage:
 
     def evict_all_users(self):
         self._users = {}
+
+        self._res_uids_db_sync.acquire()
+        self._res_uids_db.sync()
+        self._res_uids_db_sync.release()
+
+        JabberUser._db_sync.acquire()
+        JabberUser._db.sync()
+        JabberUser._db_sync.release()
+
 
     def remove_user(self, user):
         JabberUser._db_sync.acquire()
@@ -650,6 +661,7 @@ class JabberSessionEventHandler:
         RSS_Resource.schedule_update = self.schedule_update
 
         self._connected = 0
+        self._shutdown = 0
 
 
     def _process_help(self, message, user):
@@ -829,6 +841,7 @@ class JabberSessionEventHandler:
 
                 print user.jid().encode('iso8859-1', 'replace'), 'subscribed to', url
                 reply = message.reply('You have been subscribed to %s' % (url,))
+                storage.get_resource(url)
             except UrlError, url_error:
                 print user.jid().encode('iso8859-1', 'replace'), 'error (%s) subscribing to' % (url_error.args[0],), url
                 reply = message.reply('Error (%s) subscribing to %s' % (url_error.args[0], url))
@@ -965,8 +978,9 @@ class JabberSessionEventHandler:
 
             # reconnect after some timeout
             print 'disconnected'
-            thread.start_new_thread(wait_and_reconnect,
-                                    (self._jab_session, event_queue, 60))
+            if not self._shutdown:
+                thread.start_new_thread(wait_and_reconnect,
+                                        (self._jab_session, event_queue, 60))
 
     def onAuthError(self, code, data):
         print 'authError', code, data.encode('iso8859-1', 'replace')
@@ -1207,7 +1221,7 @@ class JabberSessionEventHandler:
             print 'starting RSS/RDF updater'
 
             self._update_queue_cond.acquire()
-            while 1:
+            while not self._shutdown:
                 if self._update_queue:
                     timeout = self._update_queue[0][0] - int(time.time())
 
@@ -1231,7 +1245,11 @@ class JabberSessionEventHandler:
             print 'updater thread caught exception...'
             traceback.print_exc(file=sys.stdout)
             sys.exit(1)
-          
+
+        print 'updater shutting down...'
+        if self._shutdown:
+            self._shutdown += 1
+
 
     def _update_resource(self, resource, jab_session_proxy):
         uids = storage.get_resource_uids(resource)[:]
@@ -1339,11 +1357,35 @@ def wait_and_reconnect(jab_session, event_queue, timespan):
                                 JABBER_USER, 'jabxpcom', JABBER_PASSWORD, 0)
             return
 
+def console_handler(jab_session_proxy):
+    try:
+        while 1:
+            s = raw_input()
+    except EOFError:
+        pass
+
+    # initiate a clean shutdown
+    print 'JabRSS shutting down...'
+    event_handler._shutdown = 1
+
+    jab_session_proxy.disconnect()
+    event_handler._update_queue_cond.acquire()
+    event_handler._update_queue_cond.notifyAll()
+    event_handler._update_queue_cond.release()
+
+    while event_handler._connected or (event_handler._shutdown < 2):
+        time.sleep(1)
+
+    time.sleep(1)
+    sys.exit(0)
+
 
 wait_and_reconnect(jab_session, event_queue, 0)
 
 jab_session_proxy = proxy_object_manager.getProxyForObject(event_queue, xpcom.components.interfaces.jabISession, jab_session, 5)
 thread.start_new_thread(event_handler.run, (jab_session_proxy,))
+
+thread.start_new_thread(console_handler, (jab_session_proxy,))
 
 
 event_queue.eventLoop()

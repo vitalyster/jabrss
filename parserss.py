@@ -394,6 +394,7 @@ class Feed_Parser(xmllib.XMLParser):
 
         self._state = 0
         self._cdata = None
+        self._content_mode = None
         self._summary = None
 
         self._channel = ['', '', '']
@@ -674,44 +675,66 @@ class Feed_Parser(xmllib.XMLParser):
     def atom_tagline_start(self, attrs):
         if self._state & 0x04:
             self._cdata = ''
+            if attrs.has_key('http://purl.org/atom/ns# mode'):
+                self._content_mode = attrs['http://purl.org/atom/ns# mode']
 
     def atom_tagline_end(self):
         if self._state & 0x04:
+            if self._content_mode == 'base64':
+                self._cdata = self._cdata.decode('base64')
             elem = self._current_elem()
             if elem != None:
                 elem[2] = self._cdata
 
         self._cdata = None
+        self._content_mode = None
 
 
     def atom_content_start(self, attrs):
         if self._state & 0x08:
             self._cdata = ''
+            if attrs.has_key('http://purl.org/atom/ns# mode'):
+                self._content_mode = attrs['http://purl.org/atom/ns# mode']
 
     def atom_content_end(self):
         if self._state & 0x08:
+            if self._content_mode == 'base64':
+                self._cdata = self._cdata.decode('base64')
             elem = self._current_elem()
             if elem != None and elem != '':
                 elem[2] = self._cdata
 
         self._cdata = None
+        self._content_mode = None
 
 
     def atom_summary_start(self, attrs):
         if self._state & 0x08:
             self._cdata = ''
+            if attrs.has_key('http://purl.org/atom/ns# mode'):
+                self._content_mode = attrs['http://purl.org/atom/ns# mode']
 
     def atom_summary_end(self):
         if self._state & 0x08:
+            if self._content_mode == 'base64':
+                self._cdata = self._cdata.decode('base64')
             self._summary = self._cdata
 
         self._cdata = None
+        self._content_mode = None
 
 
     def unknown_starttag(self, tag, attrs):
         if self._format == '':
             print 'format not recognised, start-tag', tag.encode('iso8859-1', 'replace')
             self._format = 'unknown'
+
+        if (self._cdata != None) and (tag[:29] == 'http://www.w3.org/1999/xhtml '):
+            self._cdata += '<' + tag[29:]
+            for attr, val in attrs.items():
+                if attr[:29] == 'http://www.w3.org/1999/xhtml ':
+                    self._cdata += ' ' + attr[29:] + '="' + val.decode(self._encoding) + '"'
+            self._cdata += '>'
 
         if tag[-8:] == ' channel':
             print 'unknown namespace for', tag.encode('iso8859-1', 'replace')
@@ -726,13 +749,10 @@ class Feed_Parser(xmllib.XMLParser):
                 print 'unknown namespace for', tag.encode('iso8859-1', 'replace')
 
     def unknown_endtag(self, tag):
-        pass
+        if (self._cdata != None) and (tag[:29] == 'http://www.w3.org/1999/xhtml '):
+            self._cdata += '</' + tag[29:] + '>'
 
     def handle_unicode_data(self, data):
-        elem = self._current_elem()
-        if elem == None:
-            return
-
         if self._cdata != None:
             self._cdata += data
             if len(self._cdata) > 16 * 1024:
