@@ -24,7 +24,7 @@ from parserss import RSS_Resource, RSS_Resource_id2url, RSS_Resource_simplify
 from parserss import UrlError
 
 
-TEXT_WELCOME = 'Welcome to JabRSS. Please note that the current privacy policy is quite simple: all your data are belong to me and might be sold to your favorite spammer. :-) For more information, please visit the JabRSS Web site at http://JabXPCOM.sunsite.dk/jabrss/'
+TEXT_WELCOME = 'Welcome to JabRSS. Please note that the current privacy policy is quite simple: all your data are belong to me and might be sold to your favorite spammer. :-) For more information, please visit the JabRSS Web site at http://JabXPCOM.sunsite.dk/jabrss/\n\nBTW, if you like this service, you can donate to keep it running, see http://cmeerw.org/donate.html'
 
 TEXT_HELP = 'Please refer to the JabRSS Web site (http://JabXPCOM.sunsite.dk/jabrss/) for more information. If you like this service you might also consider a donation, see http://cmeerw.org/donate.html'
 
