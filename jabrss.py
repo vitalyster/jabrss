@@ -118,6 +118,13 @@ class DataStorage:
         self._res_uids_db_sync = threading.Lock()
 
 
+    def _rename_cb(self, old_url, new_url):
+        try:
+            self._resources[new_url] = self._resources[old_url]
+            del self._resources[old_url]
+        except KeyError:
+            pass
+
     def get_resource(self, url):
         simple_url = RSS_Resource_simplify(url)
         try:
@@ -318,6 +325,7 @@ class DataStorage:
 
 
 storage = DataStorage()
+RSS_Resource._rename_cb = storage._rename_cb
 
 
 ##

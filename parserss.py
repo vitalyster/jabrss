@@ -556,10 +556,13 @@ class RSS_Parser(xmllib.XMLParser):
 ##
 class RSS_Resource:
     NR_ITEMS = 48
+
     _db = gdbm.open('jabrss_urls.db', 'c')
     _db.reorganize()
     _db_updates = 0
     _db_sync = threading.Lock()
+
+    _rename_cb = None
     http_proxy = None
 
     try:
@@ -574,14 +577,14 @@ class RSS_Resource:
 
         RSS_Resource._db_sync.acquire()
         try:
-            self._id_str = RSS_Resource._db['R' + self._url.encode('utf-8')]
+            self._id_str = RSS_Resource._db['R' + self._url]
             self._id = struct.unpack('>l', self._id_str)[0]
         except KeyError:
             RSS_Resource._seq_nr += 1
             RSS_Resource._db['S'] = struct.pack('>l', RSS_Resource._seq_nr)
             self._id = RSS_Resource._seq_nr
             self._id_str = struct.pack('>l', self._id)
-            RSS_Resource._db['R' + self._url.encode('utf-8')] = self._id_str
+            RSS_Resource._db['R' + self._url] = self._id_str
             RSS_Resource._db['S' + self._id_str] = self._url
 
         try:
@@ -670,13 +673,25 @@ class RSS_Resource:
                     simple_url = url_protocol + '://' + url_host + url_path
                     if simple_url != self._url:
                         RSS_Resource._db_sync.acquire()
-                        merge_needed = RSS_Resource._db.has_key('R' + simple_url.encode('utf-8'))
+                        merge_needed = RSS_Resource._db.has_key('R' + simple_url)
                         RSS_Resource._db_sync.release()
 
                         if merge_needed:
                             print 'permanent redirect: %s -> %s (merge needed)' % (self._url.encode('iso8859-1', 'replace'), simple_url.encode('iso8859-1', 'replace'))
                         else:
                             print 'permanent redirect: %s -> %s' % (self._url.encode('iso8859-1', 'replace'), simple_url.encode('iso8859-1', 'replace'))
+
+                            if RSS_Resource._rename_cb:
+                                RSS_Resource._db_sync.acquire()
+                                RSS_Resource._rename_cb(self._url, simple_url)
+
+                                RSS_Resource._db['S' + self._id_str] = simple_url
+                                RSS_Resource._db['R' + simple_url] = self._id_str
+                                del RSS_Resource._db['R' + self._url]
+                                self._url = simple_url
+                                self._url_protocol, self._url_host, self._url_path = (url_protocol, url_host, url_path)
+                                RSS_Resource._db_sync.release()
+
 
                 if RSS_Resource.http_proxy:
                     host = RSS_Resource.http_proxy
