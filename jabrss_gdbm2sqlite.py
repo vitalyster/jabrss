@@ -186,6 +186,12 @@ def convert_resources(conn):
             res_last_updated = None
             res_invalid_since = None
 
+        if res_invalid_since == 0:
+            res_invalid_since = None
+
+        if res_last_modified == 0:
+            res_last_modified = None
+
         res_history = []
         try:
             history_str = db['H' + s_key]
@@ -200,8 +206,8 @@ def convert_resources(conn):
         for i in range(0, len(res_history)/2):
             fields_history += ', time_items%d, nr_items%d' % (i, i)
 
-        cursor.execute('INSERT INTO res.resource (rid, url, last_updated, last_modified, invalid_since, err_info, title, description, link) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                       (rid, url, res_last_updated, res_last_modified, res_invalid_since, res_error, res_title, res_link, res_descr))
+        cursor.execute('INSERT INTO res.resource (rid, url, last_updated, last_modified, invalid_since, err_info, title, description, link) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                       (rid, url, res_last_updated, res_last_modified, res_invalid_since, res_error, res_title, res_descr, res_link))
 
         cursor.execute('INSERT INTO res.resource_history (rid' + fields_history + ') VALUES (?' + len(res_history) * ', ?' + ')',
                        [rid] + res_history)
