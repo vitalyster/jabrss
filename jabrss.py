@@ -1444,7 +1444,7 @@ class JabberSessionEventHandler:
                         # migrate user to another JabRSS instance
                         subs = []
 
-                for res_id in user.resources():
+                for res_id in user.resources()[:]:
                     resource = storage.get_resource_by_id(res_id)
                     if subs != None:
                         subs.append(resource.url())
