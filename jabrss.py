@@ -194,38 +194,41 @@ class DataStorage:
     # @throws ValueError
     def remove_resource_user(self, resource, user):
         res_uids = self.get_resource_uids(resource)
-        res_uids.remove(user.uid())
+        try:
+            res_uids.remove(user.uid())
 
-        if len(res_uids) == 0:
-            try:
-                del self._resources[resource.url()]
-            except KeyError:
-                pass
-            try:
-                del self._resources[resource.id()]
-            except KeyError:
-                pass
+            if len(res_uids) == 0:
+                try:
+                    del self._resources[resource.url()]
+                except KeyError:
+                    pass
+                try:
+                    del self._resources[resource.id()]
+                except KeyError:
+                    pass
 
-            try:
-                del self._res_uids[resource.id()]
-            except KeyError:
-                pass
+                try:
+                    del self._res_uids[resource.id()]
+                except KeyError:
+                    pass
 
-            self._res_uids_db_sync.acquire()
-            try:
-                del self._res_uids_db['R' + struct.pack('>l', resource.id())]
-            except KeyError:
-                pass
-        else:
-            self._res_uids_db_sync.acquire()
-            self._res_uids_db['R' + struct.pack('>l', resource.id())] = string.join(map(lambda x: struct.pack('>l', x), res_uids), '')
+                self._res_uids_db_sync.acquire()
+                try:
+                    del self._res_uids_db['R' + struct.pack('>l', resource.id())]
+                except KeyError:
+                    pass
+            else:
+                self._res_uids_db_sync.acquire()
+                self._res_uids_db['R' + struct.pack('>l', resource.id())] = string.join(map(lambda x: struct.pack('>l', x), res_uids), '')
 
-        if self._res_uids_db_updates > 64:
-            self._res_uids_db_updates = 0
-            self._res_uids_db.reorganize()
-        else:
-            self._res_uids_db_updates += 1
-        self._res_uids_db_sync.release()
+            if self._res_uids_db_updates > 64:
+                self._res_uids_db_updates = 0
+                self._res_uids_db.reorganize()
+            else:
+                self._res_uids_db_updates += 1
+                self._res_uids_db_sync.release()
+        except ValueError:
+            pass
 
 
     # @throws KeyError
@@ -418,8 +421,8 @@ class JabberUser:
         JabberUser._db_sync.release()
 
     def _adjust_statistics(self):
-        localtime = time.localtime()
-        new_stat_start = localtime[7] - localtime[6]
+        gmtime = time.gmtime()
+        new_stat_start = gmtime[7] - gmtime[6]
 
         if self._stat_start <= new_stat_start:
             shift = (new_stat_start - self._stat_start) / 7
@@ -949,17 +952,24 @@ class JabberSessionEventHandler:
                 xmlns = None
 
             if xmlns == 'jabber:iq:roster':
+                JabberUser._db_sync.acquire()
                 subscribers = {}
                 for item in query.findElements('item'):
                     item.queryInterface(judoIConstElement)
 
                     jid = item.getAttrib('jid')
-                    if item.getAttrib('subscription') == 'both':
-                        subscribers[jid.lower()] = None
+                    subscription = item.getAttrib('subscription')
+                    if subscription == 'both':
+                        try:
+                            del JabberUser._db['D' + jid.lower().encode('utf8')]
+                            print 'unsubscribing inactive user "%s"' % (jid.encode('iso8859-1', 'replace'),)
+                            self._remove_user(jid)
+                        except KeyError:
+                            subscribers[jid.lower()] = None
                     else:
+                        print 'subscription for user "%s" is "%s" (!= "both")' % (jid.encode('iso8859-1', 'replace'), subscription.encode('iso8859-1', 'replace'))
                         self._remove_user(jid)
 
-                JabberUser._db_sync.acquire()
                 u_keys = filter(lambda x: x[0] == 'U' and len(x) > 1, JabberUser._db.keys())
                 JabberUser._db_sync.release()
 
