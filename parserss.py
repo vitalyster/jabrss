@@ -756,20 +756,20 @@ class RSS_Resource:
                 else:
                     print errcode, errmsg, headers
                     error_info = 'HTTP: %d %s' % (errcode, errmsg)
-        except types.StringType, e:
-            error_info = 'misc: ' + e
+        except UnicodeError, e:
+            error_info = 'encoding: ' + str(e)
         except ValueError, e:
             error_info = 'HTTP compression: ' + str(e)
         except xmllib.Error, e:
             error_info = 'RDF/XML parser: ' + str(e)
-        except UnicodeError, e:
-            error_info = 'encoding: ' + str(e)
         except socket.error, e:
             error_info = 'socket: ' + str(e)
         except httplib.HTTPException, e:
             error_info = 'HTTP: ' + str(e)
         except TimeoutException, e:
             error_info = 'timeout: ' + str(e)
+        except types.StringType, e:
+            error_info = 'misc: ' + e
         except:
             traceback.print_exc(file=sys.stdout)
 
