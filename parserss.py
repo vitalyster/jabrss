@@ -1054,8 +1054,8 @@ class RSS_Resource:
                             else:
                                 redirect_items, redirect_seq = redirect_resource.get_headlines(0, cursor)
 
-                                db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
                                 cursor.execute('BEGIN')
+                                db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
 
                                 items, first_item_id, nr_new_items = self._process_new_items(redirect_items, cursor)
                                 del redirect_items
@@ -1164,8 +1164,8 @@ class RSS_Resource:
                     rss_parser.close()
                     new_channel_info = normalize_obj(rss_parser._channel)
 
-                    db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
                     cursor.execute('BEGIN')
+                    db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
 
                     hash_buffer = buffer(file_hash.digest())
                     cursor.execute('UPDATE resource SET hash=? WHERE rid=? AND (hash IS NULL OR hash<>?)',
@@ -1236,8 +1236,8 @@ class RSS_Resource:
             print 'Error: %s' % (error_info,)
 
         if db_txn_end == None:
-            db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
             cursor.execute('BEGIN')
+            db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
 
         if error_info != self._err_info:
             self._err_info = error_info

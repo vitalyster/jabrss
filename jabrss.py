@@ -203,7 +203,7 @@ class DataStorage:
     # get resource (by URL) from cache, database or create new object
     # @param res_cursor db cursor for resource database
     # @return resource (already locked, must be unlocked)
-    def get_resource(self, url, res_cursor=None):
+    def get_resource(self, url, res_cursor=None, lock=True):
         resource_url = RSS_Resource_simplify(url)
 
         while resource_url != None:
@@ -212,15 +212,17 @@ class DataStorage:
             try:
                 # TODO: possible race-condition with evict_resource
                 resource = self._resources[resource_url]
-                resource.lock()
+                if lock:
+                    resource.lock()
             except KeyError:
                 resource = RSS_Resource(resource_url, res_cursor)
-                resource.lock()
+                if lock:
+                    resource.lock()
                 cached_resource = False
 
             resource_url, redirect_seq = resource.redirect_info()
 
-            if resource_url != None:
+            if resource_url != None and lock:
                 resource.unlock()
 
         if not cached_resource:
@@ -240,7 +242,7 @@ class DataStorage:
             return self._resources[res_id]
         except KeyError:
             resource_url = RSS_Resource_id2url(res_id)
-            return self.get_resource(resource_url, res_cursor)
+            self.get_resource(resource_url, res_cursor, False)
 
 
     def evict_resource(self, resource):
