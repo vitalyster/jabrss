@@ -391,13 +391,15 @@ class DataStorage:
         cursor.execute('BEGIN')
         db_txn_end = Resource_Guard(lambda cursor=cursor: cursor.execute('END'))
 
-        cursor.execute('DELETE FROM user_stat WHERE uid=?',
-                       (user.uid(),))
-        cursor.execute('DELETE FROM user_resource WHERE uid=?',
-                       (user.uid(),))
-        cursor.execute('DELETE FROM user WHERE uid=?',
-                       (user.uid(),))
-        del db_txn_end
+        try:
+            cursor.execute('DELETE FROM user_stat WHERE uid=?',
+                           (user.uid(),))
+            cursor.execute('DELETE FROM user_resource WHERE uid=?',
+                           (user.uid(),))
+            cursor.execute('DELETE FROM user WHERE uid=?',
+                           (user.uid(),))
+        finally:
+            del db_txn_end
 
         print 'user %s (id %d) deleted' % (user._jid.encode('iso8859-1', 'replace'), user._uid)
         self.evict_user(user)
@@ -730,20 +732,22 @@ class JabberUser:
         else:
             cursor = db_cursor
 
-        cursor.execute('UPDATE user_resource SET seq_nr=? WHERE uid=? AND rid=?',
-                       (headline_id, self._uid, resource.id()))
+        try:
+            cursor.execute('UPDATE user_resource SET seq_nr=? WHERE uid=? AND rid=?',
+                           (headline_id, self._uid, resource.id()))
 
-        if new_items:
-            self._adjust_statistics()
-            self._nr_headlines[-1] += len(new_items)
-            items_size = reduce(lambda size, x: (size + len(x.title) +
-                                                 len(x.link) +
-                                                 (x.descr_plain!=None and len(x.descr_plain))),
-                                [0] + new_items)
-            self._size_headlines[-1] += items_size
-            self._commit_statistics(cursor)
+            if new_items:
+                self._adjust_statistics()
+                self._nr_headlines[-1] += len(new_items)
+                items_size = reduce(lambda size, x: (size + len(x.title) +
+                                                     len(x.link) +
+                                                     (x.descr_plain!=None and len(x.descr_plain))),
+                                    [0] + new_items)
+                self._size_headlines[-1] += items_size
+                self._commit_statistics(cursor)
 
-        del db_txn_end
+        finally:
+            del db_txn_end
 
 
 class DummyJabberUser(JabberUser):
@@ -1204,7 +1208,10 @@ class JabberSessionEventHandler:
                 resource = storage.get_resource_by_id(res_id)
                 resource.lock()
                 try:
-                    user.remove_resource(resource)
+                    try:
+                        user.remove_resource(resource)
+                    except ValueError:
+                        pass
                 finally:
                     resource.unlock()
 
@@ -1667,12 +1674,19 @@ class JabberSessionEventHandler:
                                                              next_item_id,
                                                              new_items, cursor)
                                     else:
-                                        user.remove_resource(resource, cursor)
+                                        try:
+                                            user.remove_resource(resource,
+                                                                 cursor)
+                                        except ValueError:
+                                            pass
 
                                     deliver_users.append(user)
 
                                 elif len(new_items) == 0:
-                                    user.remove_resource(resource, cursor)
+                                    try:
+                                        user.remove_resource(resource, cursor)
+                                    except ValueError:
+                                        pass
 
                             except KeyError:
                                 # just means that the user is no longer online
