@@ -238,7 +238,7 @@ class DataStorage:
                 self._res_uids_db.reorganize()
             else:
                 self._res_uids_db_updates += 1
-                self._res_uids_db_sync.release()
+            self._res_uids_db_sync.release()
         except ValueError:
             pass
 
