@@ -375,35 +375,59 @@ class RSS_Parser(xmllib.XMLParser):
             (self.channel_start, self.channel_end),
             'http://my.netscape.com/rdf/simple/0.9/ channel' :
             (self.channel_start, self.channel_end),
+            'http://my.netscape.com/publish/formats/rss-0.91.dtd channel' :
+            (self.channel_start, self.channel_end),
             'http://purl.org/rss/1.0/ channel' :
+            (self.channel_start, self.channel_end),
+            'http://purl.org/rss/2.0/ channel' :
             (self.channel_start, self.channel_end),
 
             'item' :
             (self.item_start, self.item_end),
             'http://my.netscape.com/rdf/simple/0.9/ item' :
             (self.item_start, self.item_end),
+            'http://my.netscape.com/publish/formats/rss-0.91.dtd item' :
+            (self.item_start, self.item_end),
             'http://purl.org/rss/1.0/ item' :
+            (self.item_start, self.item_end),
+            'http://purl.org/rss/2.0/ item' :
             (self.item_start, self.item_end),
 
             'title' :
             (self.title_start, self.title_end),
             'http://my.netscape.com/rdf/simple/0.9/ title' :
             (self.title_start, self.title_end),
+            'http://my.netscape.com/publish/formats/rss-0.91.dtd title' :
+            (self.title_start, self.title_end),
+            'http://purl.org/dc/elements/1.1/ title' :
+            (self.title_start, self.title_end),
             'http://purl.org/rss/1.0/ title' :
+            (self.title_start, self.title_end),
+            'http://purl.org/rss/2.0/ title' :
             (self.title_start, self.title_end),
 
             'link' :
             (self.link_start, self.link_end),
             'http://my.netscape.com/rdf/simple/0.9/ link' :
             (self.link_start, self.link_end),
+            'http://my.netscape.com/publish/formats/rss-0.91.dtd link' :
+            (self.link_start, self.link_end),
             'http://purl.org/rss/1.0/ link' :
+            (self.link_start, self.link_end),
+            'http://purl.org/rss/2.0/ link' :
             (self.link_start, self.link_end),
 
             'description' :
             (self.description_start, self.description_end),
             'http://my.netscape.com/rdf/simple/0.9/ description' :
             (self.description_start, self.description_end),
+            'http://my.netscape.com/publish/formats/rss-0.91.dtd description' :
+            (self.description_start, self.description_end),
+            'http://purl.org/dc/elements/1.1/ description' :
+            (self.description_start, self.description_end),
             'http://purl.org/rss/1.0/ description' :
+            (self.description_start, self.description_end),
+            'http://purl.org/rss/2.0/ description' :
             (self.description_start, self.description_end),
             }
 
@@ -418,6 +442,10 @@ class RSS_Parser(xmllib.XMLParser):
 
     def handle_xml(self, encoding, standalone):
         if encoding and not self._feed_encoding:
+            encoding = string.lower(encoding)
+            if encoding[:8] == 'windows-':
+                encoding = 'cp' + encoding[8:]
+
             self._encoding = encoding
 
 
