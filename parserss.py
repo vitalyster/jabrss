@@ -1062,6 +1062,9 @@ class RSS_Resource:
                             items.append(item)
                             nr_new_items = nr_new_items + 1
 
+                    if nr_new_items:
+                        self.lock()
+
                     if len(items) > RSS_Resource.NR_ITEMS:
                         self._first_item_id += len(items) - RSS_Resource.NR_ITEMS
                         del items[:-RSS_Resource.NR_ITEMS]
@@ -1075,8 +1078,6 @@ class RSS_Resource:
                     self._invalid_since = 0
 
                     if nr_new_items:
-                        self.lock()
-
                         # update history information
                         self._history.append((int(time.time()), nr_new_items))
                         self._history = self._history[-16:]
