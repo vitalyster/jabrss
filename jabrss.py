@@ -264,7 +264,7 @@ class DataStorage:
     # get resource (by URL) from cache, database or create new object
     # @param res_cursor db cursor for resource database
     # @return resource (already locked, must be unlocked)
-    def get_resource(self, url, res_db=None, lock=True):
+    def get_resource(self, url, res_db=None, lock=True, follow_redirect=True):
         resource_url = RSS_Resource_simplify(url)
 
         if lock:
@@ -289,7 +289,10 @@ class DataStorage:
 
                 cached_resource = False
 
-            resource_url, redirect_seq = resource.redirect_info()
+            if follow_redirect:
+                resource_url, redirect_seq = resource.redirect_info()
+            else:
+                resource_url, redirect_seq = None, None
 
             if resource_url != None and lock:
                 resource.unlock()
@@ -311,14 +314,15 @@ class DataStorage:
         finally:
             del resources_unlocker
 
-    def get_resource_by_id(self, res_id, res_db=None):
+    def get_resource_by_id(self, res_id, res_db=None, follow_redirect=False):
         resources_unlocker = self.resources_lock()
 
         try:
             return self._resources[res_id]
         except KeyError:
             resource_url = RSS_Resource_id2url(res_id)
-            return self.get_resource(resource_url, res_db, False)
+            return self.get_resource(resource_url, res_db, False,
+                                     follow_redirect)
 
 
     def evict_resource(self, resource):
@@ -1451,31 +1455,37 @@ class JabberSessionEventHandler:
 
                     try:
                         resource.lock()
-                        headline_id = user.headline_id(resource)
-                        old_id = headline_id
 
-                        new_items, headline_id = resource.get_headlines(headline_id)
-                        if new_items:
-                            self._send_headlines(self._jab_session, user,
-                                                 resource, new_items)
+                        while True:
+                            headline_id = user.headline_id(resource)
+                            old_id = headline_id
 
-                        redirect_url, redirect_seq = resource.redirect_info()
-                        if redirect_url != None:
-                            try:
-                                user.remove_resource(resource)
-                            except ValueError:
-                                pass
-                            resource.unlock()
+                            new_items, headline_id = resource.get_headlines(headline_id)
+                            if new_items:
+                                self._send_headlines(self._jab_session, user,
+                                                     resource, new_items)
 
-                            resource = storage.get_resource(redirect_url)
-                            try:
-                                user.add_resource(resource, redirect_seq)
-                            except ValueError:
-                                pass
+                            redirect_url, redirect_seq = resource.redirect_info()
+                            if redirect_url != None:
+                                try:
+                                    user.remove_resource(resource)
+                                except ValueError:
+                                    pass
+                                resource.unlock()
 
-                        elif new_items or headline_id != old_id:
-                            user.update_headline(resource, headline_id,
-                                                 new_items)
+                                resource = storage.get_resource(redirect_url, None,
+                                                                True, False)
+                                try:
+                                    user.add_resource(resource, redirect_seq)
+                                except ValueError:
+                                    pass
+
+                                continue
+                            elif new_items or headline_id != old_id:
+                                user.update_headline(resource, headline_id,
+                                                     new_items)
+
+                            break
                     finally:
                         resource.unlock()
 
