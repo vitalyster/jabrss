@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # Copyright (C) 2001-2004, Christof Meerwald
-# http://JabXPCOM.sunsite.dk
+# http://jabrss.cmeerw.org
 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -24,9 +24,9 @@ from parserss import RSS_Resource, RSS_Resource_id2url, RSS_Resource_simplify
 from parserss import UrlError
 
 
-TEXT_WELCOME = 'Welcome to jabrss. Please note that this service is still in BETA and that the current privacy policy is quite simple: all your data are belong to me and might be sold to your favorite spammer. :-) For more information, please visit the jabrss Web site at http://JabXPCOM.sunsite.dk/jabrss/'
+TEXT_WELCOME = 'Welcome to JabRSS. Please note that the current privacy policy is quite simple: all your data are belong to me and might be sold to your favorite spammer. :-) For more information, please visit the JabRSS Web site at http://JabXPCOM.sunsite.dk/jabrss/'
 
-TEXT_HELP = 'Please refer to the jabrss Web site (http://JabXPCOM.sunsite.dk/jabrss/) for more information.'
+TEXT_HELP = 'Please refer to the JabRSS Web site (http://JabXPCOM.sunsite.dk/jabrss/) for more information. If you like this service you might also consider a donation, see http://cmeerw.org/donate.html'
 
 
 JABBER_SERVER = None
