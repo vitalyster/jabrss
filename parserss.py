@@ -913,6 +913,11 @@ class RSS_Resource:
         else:
             interval = 8*60*60
 
+        if string.find(string.lower(self._url), 'slashdot.org') != -1:
+            # yes, slashdot sucks - this is a special slashdot
+            # throttle to avaoid being banned by slashdot
+            interval = interval + 180*60
+
         if randomize:
             return self._last_updated + interval + int(random.normalvariate(30, 50 + interval / 50))
         else:
