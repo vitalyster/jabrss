@@ -1068,11 +1068,11 @@ class JabberSessionEventHandler:
 
         # accept presence request
         if presence.type == jabIPresence.ptSubRequest:
-            presence_reply = presence.reply(jabIPresence.ptSubscribed)
+            self._jab_session.sendPacket(presence.reply(jabIPresence.ptSubscribed))
         elif presence.type == jabIPresence.ptUnsubRequest:
+            self._jab_session.sendPacket(presence.reply(jabIPresence.ptUnsubscribed))
+            self._delete_user(presence.sender)
             self._remove_user(presence.sender)
-            presence_reply = presence.reply(jabIPresence.ptUnsubscribed)
-        self._jab_session.sendPacket(presence_reply)
 
         if presence.type == jabIPresence.ptSubRequest:
             self._jab_session.sendPacket(presence.reply(jabIPresence.ptSubRequest))
