@@ -932,7 +932,7 @@ class JabberSessionEventHandler:
             user, jid_resource = storage.get_new_user(jid,
                                                       jabIPresence.stOffline)
 
-            print 'deleting user\'s %s subscriptions: %s', (jid.encode('iso8859-1', 'replace'), repr(user.resources()))
+            print 'deleting user\'s %s subscriptions: %s' % (jid.encode('iso8859-1', 'replace'), repr(user.resources()))
             for res_id in user.resources():
                 resource = storage.get_resource_by_id(res_id)
                 user.remove_resource(resource)
