@@ -27,6 +27,11 @@ from parserss import UrlError
 TEXT_WELCOME = '''\
 Welcome to JabRSS. Please note that the current privacy policy is quite simple: all your data are belong to me and might be sold to your favorite spammer. :-) For more information, please visit the JabRSS Web site at http://jabrss.cmeerw.org
 
+Now there is only one more thing to do before you can use JabRSS: you
+have to authorize the presence subscription request from JabRSS. This
+is necessary so that JabRSS knows your presence status and only sends
+you RSS headlines when you are online.
+
 BTW, if you like this service, you can help keeping it running by making a donation, see http://cmeerw.org/donate.html'''
 
 TEXT_HELP = '''\
