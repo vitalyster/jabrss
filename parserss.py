@@ -17,7 +17,7 @@
 # USA
 
 import gdbm, httplib, rfc822, os, random, re, socket, string, struct, sys
-import time, threading, traceback, types, zlib
+import time, threading, traceback, zlib
 import xmllib
 
 # try to use timeoutsocket if it is available
@@ -52,6 +52,9 @@ def split_url(url):
     except ValueError:
         url_host = string.lower(url)
         url_path = '/'
+
+    if url_host[-3:] == ':80':
+        url_host = url_host[:-3]
 
     if (re_validhost.match(url_host) == None) or (re_blockhost.match(url_host) != None):
         raise 'invalid URL "' + url + '"'
@@ -768,7 +771,7 @@ class RSS_Resource:
             error_info = 'HTTP: ' + str(e)
         except TimeoutException, e:
             error_info = 'timeout: ' + str(e)
-        except types.StringType, e:
+        except '', e:
             error_info = 'misc: ' + e
         except:
             traceback.print_exc(file=sys.stdout)
