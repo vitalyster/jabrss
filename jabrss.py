@@ -301,6 +301,10 @@ class DataStorage:
             del JabberUser._db['R' + user._uid_str]
         except KeyError:
             pass
+        try:
+            del JabberUser._db['T' + user._uid_str]
+        except KeyError:
+            pass
         JabberUser._db_sync.release()
 
         try:
@@ -925,11 +929,14 @@ class JabberSessionEventHandler:
                 xmlns = None
 
             if xmlns == 'jabber:iq:roster':
+                subscribers = {}
                 for item in query.findElements('item'):
                     item.queryInterface(judoIConstElement)
 
                     jid = item.getAttrib('jid')
-                    if item.getAttrib('subscription') != 'both':
+                    if item.getAttrib('subscription') == 'both':
+                        subscribers[jid] = None
+                    else:
                         iq = self._jab_session.createInfoQuery('', jabIInfoQuery.iqtSet)
                         query = iq.addQuery('roster')
                         item = query.addElement('item')
@@ -938,6 +945,15 @@ class JabberSessionEventHandler:
 
                         print 'sending remove request', jid.encode('iso8859-1', 'replace')
                         self._jab_session.sendPacket(iq)
+
+                JabberUser._db_sync.acquire()
+                u_keys = filter(lambda x: x[0] == 'U' and len(x) > 1, JabberUser._db.keys())
+                for u_key in u_keys:
+                    username = u_key[1:].decode('utf8')
+                    if not subscribers.has_key(username):
+                        print 'user "%s" in database, but not subscribed to the service' % (username.encode('iso8859-1', 'replace'),)
+
+                JabberUser._db_sync.release()
             elif xmlns == 'jabber:iq:agents':
                 # ignore agents
                 pass
@@ -1012,6 +1028,7 @@ class JabberSessionEventHandler:
 
                 for res_id in user.resources():
                     resource = storage.get_resource_by_id(res_id)
+                    user.remove_resource(resource)
                     storage.remove_resource_user(resource, user)
 
                 storage.remove_user(user)
