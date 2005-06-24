@@ -21,9 +21,12 @@ import traceback
 import apsw
 import xpcom.components
 
+import parserss
 from parserss import RSS_Resource, RSS_Resource_id2url, RSS_Resource_simplify
 from parserss import RSS_Resource_db, RSS_Resource_Cursor
 from parserss import UrlError
+
+parserss.init()
 
 
 TEXT_WELCOME = '''\
@@ -164,6 +167,7 @@ class Resource_Guard:
 def get_db():
     db = apsw.Connection('jabrss.db')
     db.setbusytimeout(10000)
+    db.cursor().execute('PRAGMA synchronous=NORMAL')
     return db
 
 class Cursor:

@@ -29,6 +29,10 @@ import mimetools
 
 SOCKET_CONNECTTIMEOUT = 60
 SOCKET_TIMEOUT = 60
+INTERVAL_DIVIDER = 3
+MIN_INTERVAL = 45*60
+MAX_INTERVAL = 24*60*60
+DB_FILENAME = 'jabrss_res.db'
 
 if hasattr(socket, 'setdefaulttimeout'):
     # Python >= 2.3 has native support for socket timeouts
@@ -61,10 +65,17 @@ random.seed()
 
 
 def RSS_Resource_db():
-    db = apsw.Connection('jabrss_res.db')
+    db = apsw.Connection(DB_FILENAME)
     db.setbusytimeout(10000)
+    db.cursor().execute('PRAGMA synchronous=NORMAL')
 
     return db
+
+def init():
+    RSS_Resource._db = RSS_Resource_db()
+
+def log_message(*msg):
+    print ' '.join(map(lambda x: str(x), msg))
 
 
 class UrlError(ValueError):
@@ -1015,7 +1026,7 @@ class Feed_Parser(xmllib.XMLParser):
 
     def unknown_starttag(self, tag, attrs):
         if self._format == '':
-            print 'format not recognised, start-tag', tag.encode('iso8859-1', 'replace')
+            log_message('format not recognised, start-tag', tag.encode('iso8859-1', 'replace'))
             self._format = 'unknown'
 
         if (self._cdata != None) and (tag[:29] == 'http://www.w3.org/1999/xhtml '):
@@ -1026,16 +1037,16 @@ class Feed_Parser(xmllib.XMLParser):
             self._cdata += '>'
 
         if tag[-8:] == ' channel':
-            print 'unknown namespace for', tag.encode('iso8859-1', 'replace')
+            log_message('unknown namespace for', tag.encode('iso8859-1', 'replace'))
 	elif tag[-5:] == ' item':
-            print 'unknown namespace for', tag.encode('iso8859-1', 'replace')
+            log_message('unknown namespace for', tag.encode('iso8859-1', 'replace'))
         elif self._state & 0xfc:
             if tag[-6:] == ' title':
-                print 'unknown namespace for', tag.encode('iso8859-1', 'replace')
+                log_message('unknown namespace for', tag.encode('iso8859-1', 'replace'))
 	    elif tag[-5:] == ' link':
-                print 'unknown namespace for', tag.encode('iso8859-1', 'replace')
+                log_message('unknown namespace for', tag.encode('iso8859-1', 'replace'))
 	    elif tag[-12:] == ' description':
-                print 'unknown namespace for', tag.encode('iso8859-1', 'replace')
+                log_message('unknown namespace for', tag.encode('iso8859-1', 'replace'))
 
     def unknown_endtag(self, tag):
         if (self._cdata != None) and (tag[:29] == 'http://www.w3.org/1999/xhtml '):
@@ -1071,7 +1082,7 @@ class Feed_Parser(xmllib.XMLParser):
         try:
             self.handle_unicode_data(ENTITIES[entity])
         except KeyError:
-            print 'ignoring unknown entity ref', entity.encode('iso8859-1', 'replace')
+            log_message('ignoring unknown entity ref', entity.encode('iso8859-1', 'replace'))
 
     def _current_elem(self):
         if self._state & 0x08:
@@ -1096,7 +1107,7 @@ class Feed_Parser(xmllib.XMLParser):
 class RSS_Resource:
     NR_ITEMS = 48
 
-    _db = RSS_Resource_db()
+    _db = None #RSS_Resource_db()
     _db_sync = thread.allocate_lock()
 
     _redirect_cb = None
@@ -1259,7 +1270,7 @@ class RSS_Resource:
                 if redirect_permanent:
                     redirect_url = url_protocol + '://' + url_host + url_path
                     if redirect_url != self._url:
-                        #print 'redirect: %s -> %s' % (self._url.encode('iso8859-1', 'replace'), redirect_url.encode('iso8859-1', 'replace'))
+                        #log_message('redirect: %s -> %s' % (self._url.encode('iso8859-1', 'replace'), redirect_url.encode('iso8859-1', 'replace')))
                         if RSS_Resource._redirect_cb:
                             redirect_resource, redirects = RSS_Resource._redirect_cb(redirect_url, db, -redirect_tries + 1)
 
@@ -1309,9 +1320,9 @@ class RSS_Resource:
                     h.putrequest('GET', request)
 
                     if conn_reused:
-                        print 'reused HTTP connection'
+                        log_message('reused HTTP connection')
                 except httplib.CannotSendRequest:
-                    print 'caught CannotSendRequest, opening new connection'
+                    log_message('caught CannotSendRequest, opening new connection')
 
                     if not conn_reused:
                         raise
@@ -1363,10 +1374,10 @@ class RSS_Resource:
                     transfer_encoding = headers.get('transfer-encoding', None)
 
                     if (content_encoding == 'gzip') or (transfer_encoding == 'gzip'):
-                        print 'gzip-encoded data'
+                        log_message('gzip-encoded data')
                         decoder = Gzip_Decompressor()
                     elif (content_encoding == 'deflate') or (transfer_encoding == 'deflate'):
-                        print 'deflate-encoded data'
+                        log_message('deflate-encoded data')
                         decoder = Deflate_Decompressor()
                     else:
                         decoder = Null_Decompressor()
@@ -1472,14 +1483,14 @@ class RSS_Resource:
 
                             redirect_url = base_url + redirect_url
 
-                        print 'Following redirect (%d) to "%s"' % (errcode, redirect_url.encode('iso8859-1', 'replace'))
+                        log_message('Following redirect (%d) to "%s"' % (errcode, redirect_url.encode('iso8859-1', 'replace')))
                         url_protocol, url_host, url_path = split_url(redirect_url)
                         redirect_tries = -redirect_tries
                     else:
-                        print errcode, errmsg, headers
+                        log_message(errcode, errmsg, headers)
                         error_info = 'HTTP: %d %s' % (errcode, errmsg)
                 else:
-                    print errcode, errmsg, headers
+                    log_message(errcode, errmsg, headers)
                     error_info = 'HTTP: %d %s' % (errcode, errmsg)
 
             if self._invalid_since and not error_info and redirect_tries == 0:
@@ -1510,7 +1521,7 @@ class RSS_Resource:
             traceback.print_exc(file=sys.stdout)
 
         if error_info:
-            print 'Error: %s' % (error_info,)
+            log_message('Error: %s' % (error_info,))
 
         if cursor == None:
             cursor = Cursor(db)
@@ -1665,8 +1676,8 @@ class RSS_Resource:
 
 
     def next_update(self, randomize=True):
-        min_interval = 45*60
-        max_interval = 24*60*60
+        min_interval = MIN_INTERVAL
+        max_interval = MAX_INTERVAL
 
         if len(self._history) >= 2:
             hist_items = len(self._history)
@@ -1687,7 +1698,7 @@ class RSS_Resource:
                     time_span = time_span - time_span_old
                     sum_items = sum_items - sum_items_old
 
-            interval = time_span / sum_items / 3
+            interval = time_span / sum_items / INTERVAL_DIVIDER
 
             # apply a bonus for well-behaved feeds
             interval = 32 * interval / (64 - self._penalty / 28)
