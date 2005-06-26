@@ -273,6 +273,8 @@ class DataStorage:
 
         if lock:
             resources_unlocker = self.resources_lock()
+        else:
+            resources_unlocker = None
 
         while resource_url != None:
             cached_resource = True
@@ -306,6 +308,7 @@ class DataStorage:
             self._resources[resource.id()] = resource
             RSS_Resource.schedule_update(resource)
 
+        del resources_unlocker
         return resource
 
     # @throws KeyError
@@ -322,29 +325,33 @@ class DataStorage:
         resources_unlocker = self.resources_lock()
 
         try:
-            return self._resources[res_id]
-        except KeyError:
-            resource_url = RSS_Resource_id2url(res_id)
-            return self.get_resource(resource_url, res_db, False,
-                                     follow_redirect)
-
+            try:
+                return self._resources[res_id]
+            except KeyError:
+                resource_url = RSS_Resource_id2url(res_id)
+                return self.get_resource(resource_url, res_db, False,
+                                         follow_redirect)
+        finally:
+            del resources_unlocker
 
     def evict_resource(self, resource):
         resources_unlocker = self.resources_lock()
+        try:
+            try:
+                del self._resources[resource.url()]
+            except KeyError:
+                pass
+            try:
+                del self._resources[resource.id()]
+            except KeyError:
+                pass
 
-        try:
-            del self._resources[resource.url()]
-        except KeyError:
-            pass
-        try:
-            del self._resources[resource.id()]
-        except KeyError:
-            pass
-
-        try:
-            del self._res_uids[resource.id()]
-        except KeyError:
-            pass
+            try:
+                del self._res_uids[resource.id()]
+            except KeyError:
+                pass
+        finally:
+            del resources_unlocker
 
 
     # @precondition self.resources_lock()
@@ -719,9 +726,11 @@ class JabberUser:
 
             # also update storage res->uid mapping
             resources_unlocker = storage.resources_lock()
-            res_uids = storage.get_resource_uids(resource, db_cursor)
-            res_uids.append(self.uid())
-            del resources_unlocker
+            try:
+                res_uids = storage.get_resource_uids(resource, db_cursor)
+                res_uids.append(self.uid())
+            finally:
+                del resources_unlocker
 
             if db_cursor == None:
                 cursor = Cursor(db)
@@ -743,12 +752,14 @@ class JabberUser:
 
         # also update storage res->uid mapping
         resources_unlocker = storage.resources_lock()
-        res_uids = storage.get_resource_uids(resource)
         try:
-            res_uids.remove(self.uid())
-        except ValueError:
-            pass
-        del resources_unlocker
+            res_uids = storage.get_resource_uids(resource)
+            try:
+                res_uids.remove(self.uid())
+            except ValueError:
+                pass
+        finally:
+            del resources_unlocker
 
         if len(res_uids) == 0:
             storage.evict_resource(resource)
@@ -853,8 +864,11 @@ class DummyJabberUser(JabberUser):
 
             # also update storage res->uid mapping
             resources_unlocker = storage.resources_lock()
-            res_uids = storage.get_resource_uids(resource, db_cursor)
-            res_uids.append(self.uid())
+            try:
+                res_uids = storage.get_resource_uids(resource, db_cursor)
+                res_uids.append(self.uid())
+            finally:
+                del resources_unlocker
         else:
             raise ValueError(res_id)
 
@@ -868,12 +882,14 @@ class DummyJabberUser(JabberUser):
 
         # also update storage res->uid mapping
         resources_unlocker = storage.resources_lock()
-        res_uids = storage.get_resource_uids(resource, db_cursor)
         try:
-            res_uids.remove(self.uid())
-        except ValueError:
-            pass
-        del resources_unlocker
+            res_uids = storage.get_resource_uids(resource, db_cursor)
+            try:
+                res_uids.remove(self.uid())
+            except ValueError:
+                pass
+        finally:
+            del resources_unlocker
 
         if len(res_uids) == 0:
             storage.evict_resource(resource)
