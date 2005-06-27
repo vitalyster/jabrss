@@ -296,7 +296,7 @@ class DataStorage:
                 cached_resource = False
 
             if follow_redirect:
-                resource_url, redirect_seq = resource.redirect_info()
+                resource_url, redirect_seq = resource.redirect_info(res_db)
             else:
                 resource_url, redirect_seq = None, None
 

@@ -197,6 +197,7 @@ def compare_items(l, r):
 class Cursor:
     def __init__(self, _db=None):
         self._txn = False
+        self._locked = False
 
         if _db == None:
             self._cursor = db.cursor()
