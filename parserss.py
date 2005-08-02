@@ -200,7 +200,7 @@ class Cursor:
         self._locked = False
 
         if _db == None:
-            self._cursor = db.cursor()
+            self._cursor = RSS_Resource_db().cursor()
         else:
             self._cursor = _db.cursor()
 
@@ -626,8 +626,12 @@ class Feed_Parser(xmllib.XMLParser):
             (self.rss_rss_start, self.rss_rss_end),
             'http://purl.org/rss/2.0/ rss' :
             (self.rss_rss_start, self.rss_rss_end),
+            # Atom 0.3
             'http://purl.org/atom/ns# feed' :
-            (self.atom_feed_start, self.atom_feed_end),
+            (self.atom03_feed_start, self.atom03_feed_end),
+            # Atom 1.0
+            'http://www.w3.org/2005/Atom feed' :
+            (self.atom10_feed_start, self.atom10_feed_end),
 
             # RSS 1.1, see http://inamidst.com/rss1.1/
             'http://purl.org/net/rss1.1# Channel' :
@@ -851,7 +855,7 @@ class Feed_Parser(xmllib.XMLParser):
         self.elements = {}
 
 
-    def atom_feed_start(self, attrs):
+    def atom03_feed_start(self, attrs):
         self._format = 'atom'
         self.elements.update({
             'http://purl.org/atom/ns# entry' :
@@ -864,7 +868,7 @@ class Feed_Parser(xmllib.XMLParser):
             (self.atom_link_start, self.atom_link_end),
 
             'http://purl.org/atom/ns# tagline' :
-            (self.atom_tagline_start, self.atom_tagline_end),
+            (self.atom_subtitle_start, self.atom_subtitle_end),
 
             'http://purl.org/atom/ns# summary' :
             (self.atom_summary_start, self.atom_summary_end),
@@ -875,7 +879,36 @@ class Feed_Parser(xmllib.XMLParser):
 
         self._state = self._state | 0x04
 
-    def atom_feed_end(self):
+    def atom03_feed_end(self):
+        self._state = self._state & ~0x04
+        self.elements = {}
+
+
+    def atom10_feed_start(self, attrs):
+        self._format = 'atom'
+        self.elements.update({
+            'http://www.w3.org/2005/Atom entry' :
+            (self.atom_entry_start, self.atom_entry_end),
+
+            'http://www.w3.org/2005/Atom title' :
+            (self.atom_title_start, self.atom_title_end),
+
+            'http://www.w3.org/2005/Atom link' :
+            (self.atom_link_start, self.atom_link_end),
+
+            'http://www.w3.org/2005/Atom subtitle' :
+            (self.atom_subtitle_start, self.atom_subtitle_end),
+
+            'http://www.w3.org/2005/Atom summary' :
+            (self.atom_summary_start, self.atom_summary_end),
+
+            'http://www.w3.org/2005/Atom content' :
+            (self.atom_content_start, self.atom_content_end)
+            })
+
+        self._state = self._state | 0x04
+
+    def atom10_feed_end(self):
         self._state = self._state & ~0x04
         self.elements = {}
 
@@ -966,20 +999,25 @@ class Feed_Parser(xmllib.XMLParser):
         if elem.link and attrs.has_key('http://purl.org/atom/ns# type') and (attrs['http://purl.org/atom/ns# type'] != 'text/html'):
             return
 
-        if attrs.has_key('http://purl.org/atom/ns# href'):
+        if elem.link and attrs.has_key('http://www.w3.org/2005/Atom type') and (attrs['http://www.w3.org/2005/Atom type'] != 'html') and (attrs['http://www.w3.org/2005/Atom type'] != 'xhtml'):
+            return
+
+        if attrs.has_key('http://www.w3.org/2005/Atom href'):
+            elem.link = attrs['http://www.w3.org/2005/Atom href']
+        elif attrs.has_key('http://purl.org/atom/ns# href'):
             elem.link = attrs['http://purl.org/atom/ns# href']
 
     def atom_link_end(self):
         pass
 
 
-    def atom_tagline_start(self, attrs):
+    def atom_subtitle_start(self, attrs):
         if self._state & 0x04:
             self._cdata = ''
             if attrs.has_key('http://purl.org/atom/ns# mode'):
                 self._content_mode = attrs['http://purl.org/atom/ns# mode']
 
-    def atom_tagline_end(self):
+    def atom_subtitle_end(self):
         if self._state & 0x04:
             if self._content_mode == 'base64':
                 self._cdata = self._cdata.decode('base64')
@@ -1763,6 +1801,7 @@ def RSS_Resource_simplify(url):
 if __name__ == '__main__':
     import sys
 
+    init()
 
     if len(sys.argv) >= 2:
         resource = RSS_Resource(sys.argv[1])
