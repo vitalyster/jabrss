@@ -46,7 +46,7 @@ def process_id(id, db):
     sys.stdout.write('<span class="resinfo">Resource <a href="%s">id %d</a>, feed penalty: %d %%<br />\n' % (html_encode(resource.url()), resource.id(), 100*resource.penalty() / 1024))
     if last_modified:
         sys.stdout.write('updated: %s, ' % (time.asctime(time.gmtime(last_modified)),))
-    sys.stdout.write('polled %s' % (time.asctime(time.gmtime(last_updated)),))
+    sys.stdout.write('polled: %s' % (time.asctime(time.gmtime(last_updated)),))
 
     if invalid_since:
         sys.stdout.write('<br /><span class="error">Error: %s</span>' % (resource.error_info(),))
@@ -56,7 +56,14 @@ def process_id(id, db):
     items = items[-15:]
     items.reverse()
     for item in items:
-        sys.stdout.write('<li><a href="%s">%s</a></li>\n' % (html_encode(item.link.encode('ascii', 'replace')), html_encode(item.title).encode('utf-8')))
+        title = item.title
+        if title == '':
+            title = item.link
+            pos = title.find('?')
+            if pos != -1:
+                title = title[pos + 1:]
+
+        sys.stdout.write('<li><a href="%s">%s</a></li>\n' % (html_encode(item.link.encode('ascii', 'replace')), html_encode(title).encode('utf-8')))
 
     sys.stdout.write('</ul>\n')
 
