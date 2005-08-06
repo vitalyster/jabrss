@@ -20,6 +20,10 @@ import codecs, httplib, md5, rfc822, os, random, re, socket, string, struct
 import sys, time, thread, traceback, types, xmllib, zlib
 import apsw
 
+SOCKET_CONNECTTIMEOUT = 60
+SOCKET_TIMEOUT = 60
+
+
 try:
     from cStringIO import StringIO
 except ImportError:
@@ -76,8 +80,6 @@ class Null_Synchronizer:
 
 
 # configuration settings
-SOCKET_CONNECTTIMEOUT = 60
-SOCKET_TIMEOUT = 60
 INTERVAL_DIVIDER = 3
 MIN_INTERVAL = 45*60
 MAX_INTERVAL = 24*60*60
