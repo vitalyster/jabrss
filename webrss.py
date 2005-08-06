@@ -16,12 +16,75 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
 # USA
 
-import cgi, os, string, sys, time
+import cgi, fcntl, os, signal, string, struct, sys, time
 
 import parserss
 from parserss import RSS_Resource, RSS_Resource_id2url, RSS_Resource_simplify
 from parserss import RSS_Resource_db, RSS_Resource_Cursor
 from parserss import UrlError
+
+
+script_dir = os.path.split(os.getenv('SCRIPT_FILENAME'))[0]
+stylesheet = 'http://cmeerw.org/style/webrss.css'
+
+if os.getenv('SERVER_NAME').find('beta.cmeerw.org') != -1:
+    db_fname = os.path.join(script_dir, '../../files/db/webrss-beta.db')
+elif os.getenv('SERVER_NAME').find('cmeerw.org') != -1:
+    db_fname = os.path.join(script_dir, '../../files/db/webrss.db')
+else:
+    stylesheet = 'http://cmeerw.hacking.cmeerw.net/style/webrss.css'
+    db_fname = os.path.join(script_dir, '../db/webrss.db')
+
+interval_div = 5
+min_interval = 45*60
+max_interval = 12*60*60
+
+
+class TimedOutException(Exception):
+    def __init__(self, value = 'Timed Out'):
+        self.value = value
+
+    def __str__(self):
+        return repr(self.value)
+
+
+def timed_out_func(timeout, func, *args, **kwargs):
+    def alarm_handler(signum, frame):
+        raise TimedOutException()
+
+    signal.alarm(timeout)
+    old = signal.signal(signal.SIGALRM, alarm_handler)
+    try:
+        result = func(*args, **kwargs)
+    finally:
+        signal.signal(signal.SIGALRM, old)
+        signal.alarm(0)
+
+    return result
+
+
+class File_Lock_Synchronizer:
+    def __init__(self, fname):
+        self._fd = open(fname, 'r+')
+
+        self._lockdata = struct.pack('hhqqhh', fcntl.F_WRLCK,
+                                     0, 0L, 0L, 0, 0)
+        self._unlockdata = struct.pack('hhqqhh', fcntl.F_UNLCK,
+                                       0, 0L, 0L, 0, 0)
+
+    def acquire(self):
+        timed_out_func(10, fcntl.fcntl, self._fd, fcntl.F_SETLKW,
+                       self._lockdata)
+
+    def release(self):
+        fcntl.fcntl(self._fd, fcntl.F_SETLK, self._unlockdata)
+
+
+parserss.init(db_fname = db_fname,
+              min_interval = 45*60, max_interval = 12*60*60,
+              interval_div = 5,
+              dbsync_obj = File_Lock_Synchronizer(db_fname))
+
 
 def html_encode(s):
     return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
@@ -69,27 +132,6 @@ def process_id(id, db):
 
     return resource.id()
 
-
-script_dir = os.path.split(os.getenv('SCRIPT_FILENAME'))[0]
-stylesheet = 'http://cmeerw.org/style/webrss.css'
-
-if os.getenv('SERVER_NAME').find('beta.cmeerw.org') != -1:
-    parserss.DB_FILENAME = os.path.join(script_dir, '../../files/db/webrss-beta.db')
-elif os.getenv('SERVER_NAME').find('cmeerw.org') != -1:
-    parserss.DB_FILENAME = os.path.join(script_dir, '../../files/db/webrss.db')
-else:
-    stylesheet = 'http://cmeerw.hacking.cmeerw.net/style/webrss.css'
-    parserss.DB_FILENAME = os.path.join(script_dir, '../db/webrss.db')
-
-parserss.INTERVAL_DIVIDER = 5
-parserss.MIN_INTERVAL = 45*60
-parserss.MAX_INTERVAL = 12*60*60
-
-def log_message(*msg):
-    pass
-
-parserss.log_message = log_message
-parserss.init()
 
 db = RSS_Resource_db()
 now = int(time.time())

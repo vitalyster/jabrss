@@ -26,7 +26,12 @@ from parserss import RSS_Resource, RSS_Resource_id2url, RSS_Resource_simplify
 from parserss import RSS_Resource_db, RSS_Resource_Cursor
 from parserss import UrlError
 
-parserss.init()
+
+def log_message(*msg):
+    print ' '.join(map(lambda x: str(x), msg))
+
+parserss.init(logmsg_func = log_message,
+              dbsync_obj = thread.allocate_lock())
 
 
 TEXT_WELCOME = '''\
@@ -171,13 +176,9 @@ def get_db():
     return db
 
 class Cursor:
-    def __init__(self, _db=None):
+    def __init__(self, _db):
         self._txn = False
-
-        if _db == None:
-            self._cursor = db.cursor()
-        else:
-            self._cursor = _db.cursor()
+        self._cursor = _db.cursor()
 
         db_sync.acquire()
 
@@ -206,6 +207,8 @@ class Cursor:
 db = get_db()
 db_sync = thread.allocate_lock()
 
+main_res_db = RSS_Resource_db()
+
 
 class DataStorage:
     def __init__(self):
@@ -233,7 +236,7 @@ class DataStorage:
 
         redirect_resource.unlock()
 
-        new_items, next_item_id, redirect_target, redirect_seq, redirects = redirect_resource.update(db, redirect_count)
+        new_items, next_item_id, redirect_target, redirect_seq, redirects = redirect_resource.update(db, redirect_count, redirect_cb = storage._redirect_cb)
 
         if len(new_items) > 0:
             redirect_resource.unlock()
@@ -1124,7 +1127,7 @@ class JabberSessionEventHandler:
                 try:
                     user.add_resource(resource)
 
-                    new_items, headline_id = resource.get_headlines(0)
+                    new_items, headline_id = resource.get_headlines(0, db=main_res_db)
                     # suppress headline delivery
                     user.update_headline(resource, headline_id, [])
                     # TODO
@@ -1162,7 +1165,7 @@ class JabberSessionEventHandler:
                     url = resource.url()
                     user.add_resource(resource)
 
-                    new_items, headline_id = resource.get_headlines(0)
+                    new_items, headline_id = resource.get_headlines(0, db=main_res_db)
                     if new_items:
                         self._send_headlines(self._jab_session, user, resource,
                                              new_items)
@@ -1480,12 +1483,12 @@ class JabberSessionEventHandler:
                             headline_id = user.headline_id(resource)
                             old_id = headline_id
 
-                            new_items, headline_id = resource.get_headlines(headline_id)
+                            new_items, headline_id = resource.get_headlines(headline_id, db=main_res_db)
                             if new_items:
                                 self._send_headlines(self._jab_session, user,
                                                      resource, new_items)
 
-                            redirect_url, redirect_seq = resource.redirect_info()
+                            redirect_url, redirect_seq = resource.redirect_info(main_res_db)
                             if redirect_url != None:
                                 print 'processing redirect to', redirect_url
 
@@ -1654,8 +1657,6 @@ class JabberSessionEventHandler:
             print 'starting RSS/RDF updater'
             db = get_db()
             res_db = RSS_Resource_db()
-
-            RSS_Resource._redirect_cb = storage._redirect_cb
             storage._redirect_db = db
 
             self._update_queue_cond.acquire()
@@ -1724,7 +1725,7 @@ class JabberSessionEventHandler:
                 resource.unlock(); need_unlock = False
                 try:
                     print time.asctime(), 'updating', resource.url()
-                    new_items, next_item_id, redirect_resource, redirect_seq, redirects = resource.update(res_db)
+                    new_items, next_item_id, redirect_resource, redirect_seq, redirects = resource.update(res_db, redirect_cb = storage._redirect_cb)
 
                     if len(new_items) > 0:
                         need_unlock = True

@@ -27,13 +27,6 @@ except ImportError:
 import mimetools
 
 
-SOCKET_CONNECTTIMEOUT = 60
-SOCKET_TIMEOUT = 60
-INTERVAL_DIVIDER = 3
-MIN_INTERVAL = 45*60
-MAX_INTERVAL = 24*60*60
-DB_FILENAME = 'jabrss_res.db'
-
 if hasattr(socket, 'setdefaulttimeout'):
     # Python >= 2.3 has native support for socket timeouts
     socket.setdefaulttimeout(SOCKET_CONNECTTIMEOUT)
@@ -71,11 +64,42 @@ def RSS_Resource_db():
 
     return db
 
-def init():
-    RSS_Resource._db = RSS_Resource_db()
+def default_log_message(*msg):
+    return
 
-def log_message(*msg):
-    print ' '.join(map(lambda x: str(x), msg))
+class Null_Synchronizer:
+    def acquire(self):
+        return
+
+    def release(self):
+        return
+
+
+# configuration settings
+SOCKET_CONNECTTIMEOUT = 60
+SOCKET_TIMEOUT = 60
+INTERVAL_DIVIDER = 3
+MIN_INTERVAL = 45*60
+MAX_INTERVAL = 24*60*60
+DB_FILENAME = 'jabrss_res.db'
+log_message = default_log_message
+
+def init(db_fname = DB_FILENAME,
+         min_interval = MIN_INTERVAL,
+         max_interval = MAX_INTERVAL,
+         interval_div = INTERVAL_DIVIDER,
+         logmsg_func = log_message,
+         dbsync_obj = Null_Synchronizer()):
+    global DB_FILENAME, MIN_INTERVAL, MAX_INTERVAL, INTERVAL_DIVIDER
+    global log_message
+
+    DB_FILENAME = db_fname
+    MIN_INTERVAL = min_interval
+    MAX_INTERVAL = max_interval
+    INTERVAL_DIVIDER = interval_div
+    log_message = logmsg_func
+
+    RSS_Resource._db_sync = dbsync_obj
 
 
 class UrlError(ValueError):
@@ -195,14 +219,10 @@ def compare_items(l, r):
 
 
 class Cursor:
-    def __init__(self, _db=None):
+    def __init__(self, _db):
         self._txn = False
         self._locked = False
-
-        if _db == None:
-            self._cursor = RSS_Resource_db().cursor()
-        else:
-            self._cursor = _db.cursor()
+        self._cursor = _db.cursor()
 
         self._locked = True
         RSS_Resource._db_sync.acquire()
@@ -1146,10 +1166,7 @@ class Feed_Parser(xmllib.XMLParser):
 class RSS_Resource:
     NR_ITEMS = 48
 
-    _db = None #RSS_Resource_db()
-    _db_sync = thread.allocate_lock()
-
-    _redirect_cb = None
+    _db_sync = Null_Synchronizer()
     http_proxy = None
 
 
@@ -1167,7 +1184,7 @@ class RSS_Resource:
         title, description, link = None, None, None
 
         if res_db == None:
-            db = RSS_Resource._db
+            db = RSS_Resource_db()
         else:
             db = res_db
         cursor = Cursor(db)
@@ -1236,7 +1253,7 @@ class RSS_Resource:
             return None, None
 
         if res_db == None:
-            db = RSS_Resource._db
+            db = RSS_Resource_db()
         else:
             db = res_db
         cursor = Cursor(db)
@@ -1263,7 +1280,7 @@ class RSS_Resource:
 
     # @return ([item], next_item_id, redirect_resource, redirect_seq, [redirects])
     # locks the resource object if new_items are returned
-    def update(self, db=None, redirect_count=5):
+    def update(self, db=None, redirect_count=5, redirect_cb=None):
         now = int(time.time())
 
         # sanity check update interval
@@ -1310,8 +1327,8 @@ class RSS_Resource:
                     redirect_url = url_protocol + '://' + url_host + url_path
                     if redirect_url != self._url:
                         #log_message('redirect: %s -> %s' % (self._url.encode('iso8859-1', 'replace'), redirect_url.encode('iso8859-1', 'replace')))
-                        if RSS_Resource._redirect_cb:
-                            redirect_resource, redirects = RSS_Resource._redirect_cb(redirect_url, db, -redirect_tries + 1)
+                        if redirect_cb != None:
+                            redirect_resource, redirects = redirect_cb(redirect_url, db, -redirect_tries + 1)
 
                             # only perform the redirect if target is valid
                             if redirect_resource._invalid_since:
@@ -1690,9 +1707,12 @@ class RSS_Resource:
 
 
     # @return ([item], next id)
-    def get_headlines(self, first_id, db_cursor=None):
+    def get_headlines(self, first_id, db_cursor=None, db=None):
         if db_cursor == None:
-            cursor = Cursor(RSS_Resource._db)
+            if db == None:
+                cursor = Cursor(RSS_Resource_db())
+            else:
+                cursor = Cursor(db)
         else:
             cursor = db_cursor
 
@@ -1773,7 +1793,7 @@ class RSS_Resource:
 
 def RSS_Resource_id2url(res_id, db_cursor=None):
     if db_cursor == None:
-        cursor = Cursor(RSS_Resource._db)
+        cursor = Cursor(RSS_Resource_db())
     else:
         cursor = db_cursor
 
