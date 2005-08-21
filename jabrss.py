@@ -556,7 +556,7 @@ class JabberUser:
         gmtime = time.gmtime(t)
 
         # converting old entries:
-        # 1775 + x/7; 1826 + x/7
+        # 1775 + x/7; 1827 + x/7
         new_stat_start = t - ((gmtime[3]*60 + gmtime[4])*60 + gmtime[5])
         new_stat_start -= gmtime[6]*24*60*60
         new_stat_start += 84*60*60
