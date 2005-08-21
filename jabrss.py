@@ -1426,13 +1426,13 @@ class JabberSessionEventHandler:
             else:
                 unknown_msg = True
                 # safe-guard against robot ping-pong
-                if self._unknown_msgs < 2:
+                if user._unknown_msgs < 2:
                     reply = message.reply('Unknown command. Please refer to the documentation at http://cmeerw.org/dev/book/view/30')
                     self._jab_session.sendPacket(reply)
-                    self._unknown_msgs = self._unknown_msgs + 1
+                    user._unknown_msgs = user._unknown_msgs + 1
 
             if not unknown_msg:
-                self._unknown_msgs = 0
+                user._unknown_msgs = 0
         except KeyError:
             traceback.print_exc(file=sys.stdout)
 
