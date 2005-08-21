@@ -497,6 +497,8 @@ class JabberUser:
     # self._stat_start .. first day corresponding to _nr_headlines[-1]
     # self._nr_headlines[8] .. number of headlines delivered (per week)
     # self._size_headlines[8] .. size of headlines delivered (per week)
+    #
+    # self._unknown_msgs .. number of unknown messages received
     ##
     def __init__(self, jid, jid_resource, show=None):
         self._jid = jid
@@ -536,6 +538,7 @@ class JabberUser:
         self._stat_start = 0
         self._nr_headlines = []
         self._size_headlines = []
+        self._unknown_msgs = 0
 
         result = cursor.execute('SELECT start, nr_msgs0, nr_msgs1, nr_msgs2, nr_msgs3, nr_msgs4, nr_msgs5, nr_msgs6, nr_msgs7, size_msgs0, size_msgs1, size_msgs2, size_msgs3, size_msgs4, size_msgs5, size_msgs6, size_msgs7 FROM user_stat WHERE uid=?',
                        (self._uid,))
@@ -1392,6 +1395,7 @@ class JabberSessionEventHandler:
 
         try:
             user, jid_resource = storage.get_user(message.sender)
+            unknown_msg = False
 
             if body == 'help':
                 self._process_help(message, user)
@@ -1420,8 +1424,15 @@ class JabberSessionEventHandler:
                 users.sort()
                 print repr(users)
             else:
-                reply = message.reply('Unknown command. Please refer to the documentation at http://cmeerw.org/dev/book/view/30')
-                self._jab_session.sendPacket(reply)
+                unknown_msg = True
+                # safe-guard against robot ping-pong
+                if self._unknown_msgs < 2:
+                    reply = message.reply('Unknown command. Please refer to the documentation at http://cmeerw.org/dev/book/view/30')
+                    self._jab_session.sendPacket(reply)
+                    self._unknown_msgs = self._unknown_msgs + 1
+
+            if not unknown_msg:
+                self._unknown_msgs = 0
         except KeyError:
             traceback.print_exc(file=sys.stdout)
 
