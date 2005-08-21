@@ -494,7 +494,7 @@ class JabberUser:
     # self._configuration & 0x0020 .. migration flag
     # self._store_messages .. number of messages that should be stored
     # self._size_limit .. limit the size of descriptions
-    # self._stat_start .. first day corresponding to _nr_headlines[-1]
+    # self._stat_start .. first week corresponding to _nr_headlines[-1]
     # self._nr_headlines[8] .. number of headlines delivered (per week)
     # self._size_headlines[8] .. size of headlines delivered (per week)
     #
@@ -552,13 +552,17 @@ class JabberUser:
 
 
     def _adjust_statistics(self):
-        gmtime = time.gmtime()
-        new_stat_start = gmtime[7] - gmtime[6]
+        t = int(time.time())
+        gmtime = time.gmtime(t)
 
-        if self._stat_start <= new_stat_start:
-            shift = (new_stat_start - self._stat_start) / 7
-        else:
-            shift = (new_stat_start + 366 - self._stat_start) / 7
+        # converting old entries:
+        # 1775 + x/7; 1826 + x/7
+        new_stat_start = t - ((gmtime[3]*60 + gmtime[4])*60 + gmtime[5])
+        new_stat_start -= gmtime[6]*24*60*60
+        new_stat_start += 84*60*60
+        new_stat_start /= 7*24*60*60
+
+        shift = new_stat_start - self._stat_start
 
         self._nr_headlines = self._nr_headlines[shift:]
         self._size_headlines = self._size_headlines[shift:]
@@ -1083,22 +1087,23 @@ class JabberSessionEventHandler:
         reply_body.append('subscribed to %d feeds' % (len(user.resources())))
 
         stat_start, nr_headlines, size_headlines = user.get_statistics()
+        stat_start = stat_start - (len(nr_headlines) - 1)
 
-        stat_start = stat_start - (len(nr_headlines) - 1) * 7
-        time_base = time.mktime((time.localtime()[0], 1, 1, 0, 0, 0, 0, 0, -1)) - 24*60*60
+        time_base = stat_start * 7*24*60*60 - 60*60*60
+
         for i in range(0, len(nr_headlines)):
             nr = nr_headlines[i]
             size = size_headlines[i]
             if nr > 0:
-                month1, day1 = time.localtime(time_base + stat_start*24*60*60)[1:3]
-                month2, day2 = time.localtime(time_base + (stat_start + 6)*24*60*60)[1:3]
+                month1, day1 = time.gmtime(time_base)[1:3]
+                month2, day2 = time.gmtime(time_base + 6*24*60*60)[1:3]
                 if size > 11*1024:
                     size_str = '%d kiB' % (size / 1024,)
                 else:
                     size_str = '%d Bytes' % (size,)
                 reply_body.append('%d/%d - %d/%d: %d headlines (%s)' % (day1, month1, day2, month2, nr, size_str))
 
-            stat_start = stat_start + 7
+            time_base += 7*24*60*60
 
         reply = message.reply(string.join(reply_body, '\n'))
         self._jab_session.sendPacket(reply)

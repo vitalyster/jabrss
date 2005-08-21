@@ -1,5 +1,5 @@
 -- -*- SQL -*-
--- Copyright (C) 2004, Christof Meerwald
+-- Copyright (C) 2004-2005, Christof Meerwald
 -- http://jabrss.cmeerw.org
 
 -- This program is free software; you can redistribute it and/or modify
@@ -27,7 +27,7 @@ CREATE TABLE user (
 
 CREATE TABLE user_stat (
     uid INTEGER NOT NULL,
-    start INTEGER NOT NULL, -- day of year
+    start INTEGER NOT NULL, -- week since 1970 (1 = week starting 5.1.1970)
     nr_msgs0 SMALLINT NOT NULL DEFAULT 0,
     size_msgs0 SMALLINT NOT NULL DEFAULT 0,
     nr_msgs1 SMALLINT NOT NULL DEFAULT 0,
