@@ -102,7 +102,13 @@ def process_id(id, db):
             resource = redirect_resource
 
     channel_info = resource.channel_info()
-    sys.stdout.write('<div class="resheader"><h2><a href="%s">%s</a></h2>\n' % (html_encode(channel_info.link.encode('ascii' ,'replace')), html_encode(channel_info.title).encode('utf-8')))
+    channel_title = channel_info.title
+    if not channel_title.strip():
+        channel_title = channel_info.link
+    if not channel_title.strip():
+        channel_title = url
+
+    sys.stdout.write('<div class="resheader"><h2><a href="%s">%s</a></h2>\n' % (html_encode(channel_info.link.encode('ascii' ,'replace')), html_encode(channel_title).encode('utf-8')))
 
     last_updated, last_modified, invalid_since = resource.times()
 

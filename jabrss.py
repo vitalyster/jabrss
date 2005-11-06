@@ -1886,7 +1886,7 @@ jab_session_input = proxy_object_manager.getProxyForObject(event_queue, xpcom.co
 
 
 def wait_and_reconnect(jab_session, event_queue, timespan):
-    while 1:
+    while True:
         print 'waiting for next connection attempt in', timespan, 'seconds'
         
         time.sleep(timespan)
@@ -1938,8 +1938,23 @@ def wait_and_reconnect(jab_session, event_queue, timespan):
 
 def console_handler(jab_session_proxy):
     try:
-        while 1:
+        while True:
             s = raw_input()
+
+            if s == 'locks':
+                # show all locked objects
+                print 'db_sync', db_sync.locked()
+                print 'storage._users_sync', storage._users_sync.locked()
+                print 'storage._resources_sync', storage._resources_sync.locked()
+
+                print 'RSS_Resource._db_sync', RSS_Resource._db_sync.locked()
+                for res in storage._resources.values():
+                    if res._lock.locked():
+                        print 'resource %s' % (res._url,)
+
+                print 'done dumping locked objects'
+            else:
+                print 'Unknown command \'%s\'' % (s,)
     except EOFError:
         pass
 
