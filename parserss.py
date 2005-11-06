@@ -49,7 +49,6 @@ else:
 
 
 re_validprotocol = re.compile('^(?P<protocol>[a-z]+):(?P<rest>.*)$')
-re_supportedprotocol = re.compile('^(http)$')
 
 re_validhost = re.compile('^(?P<host>[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+)(:(?P<port>[0-9a-z]+))?(?P<path>(/.*)?)$')
 re_blockhost = re.compile('^(10\.|127\.|172\.1[6789]\.|172\.2[0-9]\.|172\.3[01]\.|192\.168\.)')
@@ -113,8 +112,6 @@ def split_url(url):
         raise UrlError('can\'t parse protocol of URL "%s"' % (url,))
 
     url_protocol, url_rest = mo.group('protocol', 'rest')
-    if not re_supportedprotocol.match(url_protocol):
-        raise UrlError('unsupported protocol "%s"' % (url_protocol))
 
     if url_rest[:2] != '//':
         raise UrlError('missing "//" after "%s:"' % (url_protocol,))
@@ -127,8 +124,15 @@ def split_url(url):
     url_host, url_port, url_path = mo.group('host', 'port', 'path')
 
     url_host = url_host.lower()
-    if (url_port != '80') and (url_port != 'http') and (url_port != None):
-        raise UrlError('ports != 80 not allowed')
+
+    if url_protocol == 'http':
+        if (url_port != '80') and (url_port != 'http') and (url_port != None):
+            raise UrlError('http ports != 80 not allowed')
+    elif url_protocol == 'https':
+        if (url_port != '443') and (url_port != 'https') and (url_port != None):
+            raise UrlError('https ports != 443 not allowed')
+    else:
+        raise UrlError('unsupported protocol "%s"' % (url_protocol))
 
     if url_path == '':
         url_path = '/'
@@ -279,12 +283,13 @@ class Data:
 
 
 class HTTPConnection(httplib.HTTPConnection):
-##    def __init__(self, host, port=None):
-##        self._http_vsn = 10
-##        self._http_vsn_str = 'HTTP/1.0'
+    def putrequest(self, method, url):
+        self._http_vsn = 10
+        httplib.HTTPConnection.putrequest(self, method, url, True)
+        self._http_vsn = 11
 
-##        httplib.HTTPConnection.__init__(self, host, port)
 
+class HTTPSConnection(httplib.HTTPSConnection):
     def putrequest(self, method, url):
         self._http_vsn = 10
         httplib.HTTPConnection.putrequest(self, method, url, True)
@@ -1317,6 +1322,7 @@ class RSS_Resource:
         redirects = []
 
         http_conn = None
+        http_protocol = None
         http_host = None
 
         try:
@@ -1358,20 +1364,24 @@ class RSS_Resource:
                             break
 
 
-                if RSS_Resource.http_proxy:
+                if RSS_Resource.http_proxy and (url_protocol == 'http'):
                     host = RSS_Resource.http_proxy
                     request = 'http://' + url_host + url_path
                 else:
                     host = url_host
                     request = url_path
 
-                if http_host == host and http_conn != None:
+                if url_protocol == 'http' and http_protocol == url_protocol and http_host == host and http_conn != None:
                     conn_reused = True
                     h = http_conn
                 else:
                     conn_reused = False
-                    h = HTTPConnection(host)
+                    if url_protocol == 'https':
+                        h = HTTPSConnection(host)
+                    else:
+                        h = HTTPConnection(host)
 
+                http_protocol = url_protocol
                 http_host = host
                 http_conn = None
                 try:
