@@ -234,11 +234,12 @@ class Cursor:
         RSS_Resource._db_sync.acquire()
 
     def __del__(self):
-        if self._txn:
-            self._cursor.execute('END')
-
-        if self._locked:
-            RSS_Resource._db_sync.release()
+        try:
+            if self._txn:
+                self._cursor.execute('END')
+        finally:
+            if self._locked:
+                RSS_Resource._db_sync.release()
 
 
     def unlock(self):
@@ -883,7 +884,7 @@ class Feed_Parser(xmllib.XMLParser):
 
 
     def atom03_feed_start(self, attrs):
-        self._format = 'atom'
+        self._format = 'atom03'
         self.elements.update({
             'http://purl.org/atom/ns# entry' :
             (self.atom_entry_start, self.atom_entry_end),
@@ -912,7 +913,7 @@ class Feed_Parser(xmllib.XMLParser):
 
 
     def atom10_feed_start(self, attrs):
-        self._format = 'atom'
+        self._format = 'atom10'
         self.elements.update({
             'http://www.w3.org/2005/Atom entry' :
             (self.atom_entry_start, self.atom_entry_end),
@@ -1023,16 +1024,15 @@ class Feed_Parser(xmllib.XMLParser):
         if elem == None:
             return
 
-        if elem.link and attrs.has_key('http://purl.org/atom/ns# type') and (attrs['http://purl.org/atom/ns# type'] != 'text/html'):
-            return
+        if elem.link:
+            if (self._format == 'atom03') and attrs.has_key('type') and (attrs['type'] != 'text/html'):
+                return
 
-        if elem.link and attrs.has_key('http://www.w3.org/2005/Atom type') and (attrs['http://www.w3.org/2005/Atom type'] != 'html') and (attrs['http://www.w3.org/2005/Atom type'] != 'xhtml'):
-            return
+            if (self._format == 'atom10') and attrs.has_key('type') and (attrs['type'] != 'html') and (attrs['type'] != 'xhtml'):
+                return
 
-        if attrs.has_key('http://www.w3.org/2005/Atom href'):
-            elem.link = attrs['http://www.w3.org/2005/Atom href']
-        elif attrs.has_key('http://purl.org/atom/ns# href'):
-            elem.link = attrs['http://purl.org/atom/ns# href']
+        if attrs.has_key('href'):
+            elem.link = attrs['href']
 
     def atom_link_end(self):
         pass
@@ -1041,8 +1041,8 @@ class Feed_Parser(xmllib.XMLParser):
     def atom_subtitle_start(self, attrs):
         if self._state & 0x04:
             self._cdata = ''
-            if attrs.has_key('http://purl.org/atom/ns# mode'):
-                self._content_mode = attrs['http://purl.org/atom/ns# mode']
+            if (self._format == 'atom03') and attrs.has_key('mode'):
+                self._content_mode = attrs['mode']
 
     def atom_subtitle_end(self):
         if self._state & 0x04:
@@ -1059,8 +1059,8 @@ class Feed_Parser(xmllib.XMLParser):
     def atom_content_start(self, attrs):
         if self._state & 0x08:
             self._cdata = ''
-            if attrs.has_key('http://purl.org/atom/ns# mode'):
-                self._content_mode = attrs['http://purl.org/atom/ns# mode']
+            if (self._format == 'atom03') and attrs.has_key('mode'):
+                self._content_mode = attrs['mode']
 
     def atom_content_end(self):
         if self._state & 0x08:
@@ -1077,8 +1077,8 @@ class Feed_Parser(xmllib.XMLParser):
     def atom_summary_start(self, attrs):
         if self._state & 0x08:
             self._cdata = ''
-            if attrs.has_key('http://purl.org/atom/ns# mode'):
-                self._content_mode = attrs['http://purl.org/atom/ns# mode']
+            if (self._format == 'atom03') and attrs.has_key('mode'):
+                self._content_mode = attrs['mode']
 
     def atom_summary_end(self):
         if self._state & 0x08:
