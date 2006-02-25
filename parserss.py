@@ -699,6 +699,14 @@ class Feed_Parser(xmllib.XMLParser):
 
                 self._encoding = encoding
 
+    def _get_atom_attr(self, attrs, name):
+        for ns in ['', 'http://purl.org/atom/ns# ',
+                   'http://www.w3.org/2005/Atom ']:
+            if attrs.has_key(ns + name):
+                return attrs[ns + name]
+
+        return None
+
     def handle_xml(self, encoding, standalone):
         self._set_encoding(encoding)
 
@@ -1024,15 +1032,18 @@ class Feed_Parser(xmllib.XMLParser):
         if elem == None:
             return
 
+        attr_type = self._get_atom_attr(attrs, 'type')
+
         if elem.link:
-            if (self._format == 'atom03') and attrs.has_key('type') and (attrs['type'] != 'text/html'):
+            if (self._format == 'atom03') and (attr_type != None) and (attr_type != 'text/html'):
                 return
 
-            if (self._format == 'atom10') and attrs.has_key('type') and (attrs['type'] != 'html') and (attrs['type'] != 'xhtml'):
+            if (self._format == 'atom10') and (attr_type != None) and (attr_type != 'html') and (attr_type != 'xhtml'):
                 return
 
-        if attrs.has_key('href'):
-            elem.link = attrs['href']
+        attr_href = self._get_atom_attr(attrs, 'href')
+        if attr_href != None:
+            elem.link = attr_href
 
     def atom_link_end(self):
         pass
@@ -1041,8 +1052,10 @@ class Feed_Parser(xmllib.XMLParser):
     def atom_subtitle_start(self, attrs):
         if self._state & 0x04:
             self._cdata = ''
-            if (self._format == 'atom03') and attrs.has_key('mode'):
-                self._content_mode = attrs['mode']
+            if self._format == 'atom03':
+                attr_mode = self._get_atom_attr(attrs, 'mode')
+                if attr_mode != None:
+                    self._content_mode = attr_mode
 
     def atom_subtitle_end(self):
         if self._state & 0x04:
@@ -1059,8 +1072,10 @@ class Feed_Parser(xmllib.XMLParser):
     def atom_content_start(self, attrs):
         if self._state & 0x08:
             self._cdata = ''
-            if (self._format == 'atom03') and attrs.has_key('mode'):
-                self._content_mode = attrs['mode']
+            if self._format == 'atom03':
+                attr_mode = self._get_atom_attr(attrs, 'mode')
+                if attr_mode != None:
+                    self._content_mode = attr_mode
 
     def atom_content_end(self):
         if self._state & 0x08:
@@ -1077,8 +1092,10 @@ class Feed_Parser(xmllib.XMLParser):
     def atom_summary_start(self, attrs):
         if self._state & 0x08:
             self._cdata = ''
-            if (self._format == 'atom03') and attrs.has_key('mode'):
-                self._content_mode = attrs['mode']
+            if self._format == 'atom03':
+                attr_mode = self._get_atom_attr(attrs, 'mode')
+                if attr_mode != None:
+                    self._content_mode = attr_mode
 
     def atom_summary_end(self):
         if self._state & 0x08:
