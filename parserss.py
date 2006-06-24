@@ -62,7 +62,7 @@ random.seed()
 
 def RSS_Resource_db():
     db = apsw.Connection(DB_FILENAME)
-    db.setbusytimeout(10000)
+    db.setbusytimeout(60000)
     db.cursor().execute('PRAGMA synchronous=NORMAL')
 
     return db

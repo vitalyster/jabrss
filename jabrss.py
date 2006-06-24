@@ -171,7 +171,7 @@ class Resource_Guard:
 
 def get_db():
     db = apsw.Connection('jabrss.db')
-    db.setbusytimeout(10000)
+    db.setbusytimeout(60000)
     db.cursor().execute('PRAGMA synchronous=NORMAL')
     return db
 
