@@ -1822,8 +1822,8 @@ class JabberSessionEventHandler:
                 if redirect_resource == None:
                     self.schedule_update(resource)
         finally:
-            cursor = None
-            users_unlocker = None
+	    del cursor
+            del users_unlocker
             if need_unlock:
                 resource.unlock(); need_unlock = False
 
@@ -1859,7 +1859,7 @@ class JabberSessionEventHandler:
                         pass
 
             finally:
-                cursor = None
+                del cursor
                 if need_unlock:
                     resource.unlock(); need_unlock = False
 
