@@ -1490,7 +1490,7 @@ class RSS_Resource:
                     l = response.read(4096)
                     while l:
                         bytes_received = bytes_received + len(l)
-                        if bytes_received > 48 * 1024:
+                        if bytes_received > 72 * 1024:
                             raise ValueError('file exceeds maximum allowed size')
 
                         data = decoder.feed(l)
@@ -1502,7 +1502,7 @@ class RSS_Resource:
                                 xml_started = 1
 
                         bytes_processed = bytes_processed + len(data)
-                        if bytes_processed > 96 * 1024:
+                        if bytes_processed > 128 * 1024:
                             raise ValueError('file exceeds maximum allowed decompressed size')
 
                         rss_parser.feed(data)
@@ -1858,5 +1858,9 @@ if __name__ == '__main__':
         new_items, next_item_id, redirect_resource, redirect_seq, redirects = resource.update()
         channel_info = resource.channel_info()
         print channel_info.title.encode('iso8859-1', 'replace'), channel_info.link.encode('iso8859-1', 'replace'), channel_info.descr.encode('iso8859-1', 'replace')
+        error_info = resource.error_info()
+        if error_info:
+            print 'error info', resource.error_info()
+
         if len(new_items) > 0:
             print 'new items', map(lambda x: (x.title.encode('iso8859-1', 'replace'), x.link.encode('iso8859-1', 'replace')), new_items), next_item_id

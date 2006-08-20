@@ -1420,14 +1420,6 @@ class JabberSessionEventHandler:
                 self._process_unsubscribe(message, user, body[12:])
             elif body[:5] == 'info ':
                 self._process_info(message, user, body[5:])
-            elif body == 'debug resources':
-                resources = storage._resources.keys()
-                resources.sort()
-                print repr(resources)
-            elif body == 'debug users':
-                users = storage._users.keys()
-                users.sort()
-                print repr(users)
             else:
                 unknown_msg = True
                 # safe-guard against robot ping-pong
@@ -1668,6 +1660,8 @@ class JabberSessionEventHandler:
 
 
     def run(self, jab_session_proxy):
+        db, res_db = None, None
+
         try:
             time.sleep(20)
             print 'starting RSS/RDF updater'
@@ -1702,6 +1696,9 @@ class JabberSessionEventHandler:
             sys.exit(1)
 
         print 'updater shutting down...'
+        del db
+        del res_db
+
         if self._shutdown:
             self._shutdown += 1
 
@@ -1937,11 +1934,16 @@ def wait_and_reconnect(jab_session, event_queue, timespan):
             return
 
 def console_handler(jab_session_proxy):
+    db = get_db()
+
     try:
         while True:
             s = raw_input()
+            s = ' '.join(map(string.strip, s.split()))
 
-            if s == 'locks':
+            if s == '':
+                pass
+            elif s == 'debug locks':
                 # show all locked objects
                 print 'db_sync', db_sync.locked()
                 print 'storage._users_sync', storage._users_sync.locked()
@@ -1953,13 +1955,48 @@ def console_handler(jab_session_proxy):
                         print 'resource %s' % (res._url,)
 
                 print 'done dumping locked objects'
+            elif body == 'debug resources':
+                resources = storage._resources.keys()
+                resources.sort()
+                print repr(resources)
+            elif body == 'debug users':
+                users = storage._users.keys()
+                users.sort()
+                print repr(users)
+            elif body == 'statistics':
+                cursor = Cursor(db)
+
+                try:
+                    result = cursor.execute('SELECT count(uid) FROM user')
+
+                    total_users = 0
+                    for row in result:
+                        total_users = row[0]
+
+                    result = cursor.execute('SELECT count(rid) FROM (SELECT DISTINCT rid FROM user_resource)')
+
+                    total_resources = 0
+                    for row in result:
+                        total_resources = row[0]
+                finally:
+                    del cursor
+
+                print 'Users online/total: %d/%d' % (len(storage._users) / 2,
+                                                     total_users)
+                print 'RDF feeds used/total: %d/%d' % (len(storage._resources) / 2, total_resources)
+
+            elif body == 'shutdown':
+                break
             else:
                 print 'Unknown command \'%s\'' % (s,)
+
     except EOFError:
         pass
 
     # initiate a clean shutdown
     print 'JabRSS shutting down...'
+
+    del db
     event_handler._shutdown = 1
 
     jab_session_proxy.disconnect()
@@ -1984,5 +2021,8 @@ thread.start_new_thread(console_handler, (jab_session_proxy,))
 
 event_queue.eventLoop()
 
+
+del db
+del main_res_db
 
 print 'JabRSS shutdown complete'
