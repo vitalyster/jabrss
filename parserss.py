@@ -1247,6 +1247,7 @@ class RSS_Resource:
             self._history = zip(history_times, history_nr)
 
         del cursor
+        del db
 
 
     def lock(self):

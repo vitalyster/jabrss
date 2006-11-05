@@ -173,6 +173,7 @@ def get_db():
     db = apsw.Connection('jabrss.db')
     db.setbusytimeout(60000)
     db.cursor().execute('PRAGMA synchronous=NORMAL')
+
     return db
 
 class Cursor:
@@ -1697,6 +1698,7 @@ class JabberSessionEventHandler:
 
         print 'updater shutting down...'
         del db
+        del storage._redirect_db
         del res_db
 
         if self._shutdown:
@@ -1955,15 +1957,15 @@ def console_handler(jab_session_proxy):
                         print 'resource %s' % (res._url,)
 
                 print 'done dumping locked objects'
-            elif body == 'debug resources':
+            elif s == 'debug resources':
                 resources = storage._resources.keys()
                 resources.sort()
                 print repr(resources)
-            elif body == 'debug users':
+            elif s == 'debug users':
                 users = storage._users.keys()
                 users.sort()
                 print repr(users)
-            elif body == 'statistics':
+            elif s == 'statistics':
                 cursor = Cursor(db)
 
                 try:
@@ -1985,7 +1987,7 @@ def console_handler(jab_session_proxy):
                                                      total_users)
                 print 'RDF feeds used/total: %d/%d' % (len(storage._resources) / 2, total_resources)
 
-            elif body == 'shutdown':
+            elif s == 'shutdown':
                 break
             else:
                 print 'Unknown command \'%s\'' % (s,)
