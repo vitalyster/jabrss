@@ -484,6 +484,20 @@ def strip_resource(jid):
 
     return jid.lower()
 
+def get_week_nr():
+    t = int(time.time())
+    gmtime = time.gmtime(t)
+
+    # converting old entries:
+    # 1775 + x/7; 1827 + x/7
+    week_nr = t - ((gmtime[3]*60 + gmtime[4])*60 + gmtime[5])
+    week_nr -= gmtime[6]*24*60*60
+    week_nr += 84*60*60
+    week_nr /= 7*24*60*60
+
+    return week_nr
+
+
 class JabberUser:
     ##
     # self._jid
@@ -526,8 +540,8 @@ class JabberUser:
                        (self._jid,))
             self._uid, self._configuration, self._store_messages, self._size_limit = cursor.next()
         except StopIteration:
-            cursor.execute('INSERT INTO user (jid, conf, store_messages, size_limit) VALUES (?, ?, ?, ?)',
-                           (self._jid, self._configuration, self._store_messages, self._size_limit))
+            cursor.execute('INSERT INTO user (jid, conf, store_messages, size_limit, since) VALUES (?, ?, ?, ?, ?)',
+                           (self._jid, self._configuration, self._store_messages, self._size_limit, get_week_nr()))
             self._uid = db.last_insert_rowid()
 
         if self._size_limit == None:
@@ -559,16 +573,7 @@ class JabberUser:
 
 
     def _adjust_statistics(self):
-        t = int(time.time())
-        gmtime = time.gmtime(t)
-
-        # converting old entries:
-        # 1775 + x/7; 1827 + x/7
-        new_stat_start = t - ((gmtime[3]*60 + gmtime[4])*60 + gmtime[5])
-        new_stat_start -= gmtime[6]*24*60*60
-        new_stat_start += 84*60*60
-        new_stat_start /= 7*24*60*60
-
+        new_stat_start = get_week_nr()
         shift = new_stat_start - self._stat_start
 
         self._nr_headlines = self._nr_headlines[shift:]
@@ -1436,6 +1441,23 @@ class JabberSessionEventHandler:
                 for username in delete_users:
                     print 'user "%s" in database, but not subscribed to the service' % (username.encode('iso8859-1', 'replace'),)
                     self._delete_user(username)
+
+
+                week_nr = get_week_nr()
+
+                cursor = Cursor(db)
+                result = cursor.execute('SELECT jid FROM user LEFT OUTER JOIN user_stat ON (user.uid=user_stat.uid) WHERE start < ? AND since < ?',
+                                        (week_nr - 32, week_nr - 3))
+                delete_users = []
+                for row in result:
+                    delete_users.append(row[0])
+
+                del cursor
+
+                for username in delete_users:
+                    print 'user "%s" hasn\'t used the service for more than 40 weeks' % (username.encode('iso8859-1', 'replace'),)
+                    #self._delete_user(username)
+
 
             elif xmlns == 'jabber:iq:agents':
                 # ignore agents
