@@ -1051,7 +1051,7 @@ class JabberSessionEventHandler:
                 elif args[0] == 'subject':
                     format = self._parse_format(args[1:])
                     user.set_subject_format(format)
-                    reply_body = 'header format adjusted'
+                    reply_body = 'subject format adjusted'
                 else:
                     reply_body = 'Unknown configuration option'
         except:
