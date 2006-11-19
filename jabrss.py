@@ -1,5 +1,5 @@
 #!/usr/bin/python
-# Copyright (C) 2001-2005, Christof Meerwald
+# Copyright (C) 2001-2006, Christof Meerwald
 # http://jabrss.cmeerw.org
 
 # This program is free software; you can redistribute it and/or modify
@@ -52,6 +52,8 @@ info http://host.domain/path/feed.rss
 list
 set ( plaintext | chat | headline )
 set also_deliver [ Away ] [ XA ] [ DND ]
+set header_format [ Title ] [ URL ]
+set subject_format  [ Title ] [ URL ]
 set size_limit <num>
 set store_messages <num>
 configuration
@@ -493,6 +495,10 @@ class JabberUser:
     # self._configuration & 0x001c .. deliver when away
     #   (4 = away, 8 = xa, 16 = dnd)
     # self._configuration & 0x0020 .. migration flag
+    # self._configuration & 0x00c0 .. feed title/URL in message subject
+    #   (0x40 .. title, 0x80 .. URL)
+    # self._configuration & 0x0300 .. feed title/URL in message text
+    #   (0x100 .. title, 0x200 .. URL)
     # self._store_messages .. number of messages that should be stored
     # self._size_limit .. limit the size of descriptions
     # self._stat_start .. first week corresponding to _nr_headlines[-1]
@@ -604,6 +610,22 @@ class JabberUser:
 
     def get_message_type(self):
         return self._configuration & 0x0003
+
+
+    def set_subject_format(self, format):
+        self._configuration = (self._configuration & ~0x00c0) | (((format ^ 0x1) & 0x0003) << 6)
+        self._update_configuration()
+
+    def get_subject_format(self):
+        return ((self._configuration & 0x00c0) >> 6) ^ 0x1
+
+
+    def set_header_format(self, format):
+        self._configuration = (self._configuration & ~0x0300) | ((format & 0x0003) << 8)
+        self._update_configuration()
+
+    def get_header_format(self):
+        return (self._configuration & 0x0300) >> 8
 
 
     def set_migrated(self, migrated):
@@ -968,6 +990,20 @@ class JabberSessionEventHandler:
         self._jab_session.sendPacket(reply)
 
 
+    def _parse_format(self, args):
+        format = 0
+        for arg in args:
+            if arg.lower() == 'title':
+                format |= 1
+            elif arg.lower() == 'url' or arg.lower() == 'link':
+                format |= 2
+            elif arg.lower() == '<empty>':
+                format = 0
+                break
+            else:
+                raise 'invalid format'
+        return format
+
     def _process_set(self, message, user, argstr):
         try:
             arg = string.strip(argstr)
@@ -1008,6 +1044,14 @@ class JabberSessionEventHandler:
                     size_limit = string.atoi(args[1])
                     user.set_size_limit(size_limit)
                     reply_body = '"size_limit" setting adjusted'
+                elif args[0] == 'header':
+                    format = self._parse_format(args[1:])
+                    user.set_header_format(format)
+                    reply_body = 'header format adjusted'
+                elif args[0] == 'subject':
+                    format = self._parse_format(args[1:])
+                    user.set_subject_format(format)
+                    reply_body = 'header format adjusted'
                 else:
                     reply_body = 'Unknown configuration option'
         except:
@@ -1016,6 +1060,17 @@ class JabberSessionEventHandler:
         reply = message.reply(reply_body)
         self._jab_session.sendPacket(reply)
 
+
+    def _format_format_conf(self, format):
+        format_text = []
+        if format & 1:
+            format_text.append('title')
+        if format & 2:
+            format_text.append('url')
+        if format_text == []:
+            format_text.append('<empty>')
+
+        return ', '.join(format_text)
 
     def _process_config(self, message, user):
         reply_body = ['Current configuration:']
@@ -1042,6 +1097,12 @@ class JabberSessionEventHandler:
             if deliver_when_dnd:
                 deliver_list.append('DND')
             reply_body.append('Headlines will also be delivered when you are %s' % (string.join(deliver_list, ', ')))
+
+        subject_format = user.get_subject_format()
+        reply_body.append('subject format: %s' % (self._format_format_conf(subject_format),))
+
+        header_format = user.get_header_format()
+        reply_body.append('header format: %s' % (self._format_format_conf(header_format),))
 
         store_messages = user.get_store_messages()
         reply_body.append('At most %d headlines will be stored for later delivery' % (store_messages,))
@@ -1574,18 +1635,44 @@ class JabberSessionEventHandler:
             self._jab_session.sendPacket(welcome_message)
 
 
+    def _format_header(self, title, url, res_url, format):
+        if url == '':
+            url = res_url
+
+        if format == 1:
+            return '%s' % (title,)
+        elif format == 2:
+            return '%s' % (url,)
+        elif format == 3:
+            if title != '':
+                return '%s: %s' % (title, url)
+            else:
+                return url
+
+        return ''
+
     def _send_headlines(self, jab_session, user, resource, items, not_stored=False):
         print 'sending', user.jid().encode('iso8859-1', 'replace'), resource.url()
         message_type = user.get_message_type()
+        subject_format = user.get_subject_format()
+        header_format = user.get_header_format()
 
         channel_info = resource.channel_info()
 
-        if message_type == 0 or message_type == 2:
+        subject_text = self._format_header(channel_info.title, channel_info.link, resource.url(), subject_format)
+
+        if message_type == 0 or message_type == 2: # normal message or chat
             body = ''
+            header_text = self._format_header(channel_info.title, channel_info.link, resource.url(), header_format)
+            if header_text != '':
+                body += '[ %s ]\n' % (header_text,)
 
             if not not_stored and (len(items) > user.get_store_messages()):
-                body = body + ('%d headlines suppressed (from %s)\n\n' % (len(items) - user.get_store_messages(), channel_info.title))
+                body += ('%d headlines suppressed (from %s)\n' % (len(items) - user.get_store_messages(), channel_info.title))
                 items = items[-user.get_store_messages():]
+
+            if body != '':
+                body += '\n'
 
             for item in items:
                 try:
@@ -1606,12 +1693,12 @@ class JabberSessionEventHandler:
             message = jab_session.createMessage(user.jid(), body, mt)
             message.setSubject(channel_info.title)
             jab_session.sendPacket(message)
-        elif message_type == 1:
+        elif message_type == 1:         # headline
             if not not_stored and (len(items) > user.get_store_messages()):
                 message = jab_session.createMessage(user.jid(),
                                                     '%d headlines suppressed' % (len(items) - user.get_store_messages(),),
                                                     jabIConstMessage.mtHeadline)
-                message.setSubject(channel_info.title)
+                message.setSubject(subject_text)
                 message.queryInterface(jabIPacket)
                 oob_ext = message.addExtension('oob')
                 oob_url = oob_ext.addElement('url')
@@ -1635,7 +1722,7 @@ class JabberSessionEventHandler:
                     message = jab_session.createMessage(user.jid(),
                                                         description[:user.get_size_limit()],
                                                         jabIConstMessage.mtHeadline)
-                    message.setSubject(channel_info.title)
+                    message.setSubject(subject_text)
                     message.queryInterface(jabIPacket)
                     oob_ext = message.addExtension('oob')
                     oob_url = oob_ext.addElement('url')

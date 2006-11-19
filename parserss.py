@@ -1,5 +1,5 @@
 #!/usr/bin/python
-# Copyright (C) 2001-2005, Christof Meerwald
+# Copyright (C) 2001-2006, Christof Meerwald
 # http://jabrss.cmeerw.org
 
 # This program is free software; you can redistribute it and/or modify
@@ -1188,7 +1188,7 @@ class Feed_Parser(xmllib.XMLParser):
 #  'T' + resource_id -> Resource times
 ##
 class RSS_Resource:
-    NR_ITEMS = 48
+    NR_ITEMS = 64
 
     _db_sync = Null_Synchronizer()
     http_proxy = None
