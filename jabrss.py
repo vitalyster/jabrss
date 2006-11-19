@@ -52,8 +52,8 @@ info http://host.domain/path/feed.rss
 list
 set ( plaintext | chat | headline )
 set also_deliver [ Away ] [ XA ] [ DND ]
-set header_format [ Title ] [ URL ]
-set subject_format  [ Title ] [ URL ]
+set header [ Title ] [ URL ]
+set subject  [ Title ] [ URL ]
 set size_limit <num>
 set store_messages <num>
 configuration
