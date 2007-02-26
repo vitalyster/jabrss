@@ -2074,6 +2074,17 @@ def console_handler(jab_session_proxy):
                 users = storage._users.keys()
                 users.sort()
                 print repr(users)
+            elif s.startswith('dump user '):
+                try:
+                    user, resource = storage.get_user(s[10:].strip())
+
+                    print 'jid: %s, uid: %d' % (repr(user.jid()), user.uid())
+                    print 'resources: %s' % (repr(user._jid_resources.items()),)
+                    print 'presence: %d' % (user.presence(),)
+                    print 'delivery state: %d' % (user.get_delivery_state(),)
+                    print 'statistics: %s' % (repr(user.get_statistics()),)
+                except KeyError:
+                    print 'user not online'
             elif s == 'statistics':
                 cursor = Cursor(db)
 
