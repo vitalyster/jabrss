@@ -1608,6 +1608,8 @@ class RSS_Resource:
             error_info = 'timeout: ' + str(e)
         except socket.error, e:
             error_info = 'socket: ' + str(e)
+        except IOError, e:
+            error_info = 'I/O error: ' + str(e)
         except httplib.BadStatusLine, e:
             error_info = 'HTTP: bad status line'
         except httplib.IncompleteRead, e:
