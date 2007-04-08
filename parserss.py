@@ -17,8 +17,14 @@
 # USA
 
 import codecs, httplib, md5, rfc822, os, random, re, socket, string, struct
-import sys, time, thread, traceback, types, xmllib, zlib
+import sys, time, thread, traceback, types, zlib
 import apsw
+
+import warnings
+warnings.filterwarnings('ignore',
+                        category=DeprecationWarning,
+                        message='The xmllib module is obsolete.  Use xml.sax instead.')
+import xmllib
 
 SOCKET_CONNECTTIMEOUT = 60
 SOCKET_TIMEOUT = 60
@@ -862,7 +868,10 @@ class Feed_Parser(xmllib.XMLParser):
             'http://purl.org/rss/1.0/ description' :
             (self.rss_description_start, self.rss_description_end),
             'http://purl.org/rss/2.0/ description' :
-            (self.rss_description_start, self.rss_description_end)
+            (self.rss_description_start, self.rss_description_end),
+
+            'enclosure' :
+            (self.rss_enclosure_start, self.rss_enclosure_end)
             })
 
     def rss_rss_end(self):
@@ -1001,6 +1010,20 @@ class Feed_Parser(xmllib.XMLParser):
                 elem.descr = self._cdata
 
         self._cdata = None
+
+
+    def rss_enclosure_start(self, attrs):
+        if self._state & 0xfc:
+            elem = self._current_elem()
+            if elem != None and elem.link == '':
+                if attrs.has_key('url'):
+                    elem.link = attrs['url']
+
+            self._cdata = ''
+
+    def rss_enclosure_end(self):
+        if self._state & 0xfc:
+            self._cdata = None
 
 
     def atom_entry_start(self, attrs):
