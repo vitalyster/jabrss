@@ -638,7 +638,7 @@ ENTITIES = {
 
 
 class Feed_Parser(xmllib.XMLParser):
-    def __init__(self, charset=None, default_charset=None):
+    def __init__(self, base_url, charset=None, default_charset=None):
         xmllib.XMLParser.__init__(self, accept_utf8=1)
 
         self.elements = {
@@ -672,6 +672,7 @@ class Feed_Parser(xmllib.XMLParser):
             (self.rss_rss11_start, self.rss_rss11_end)
             }
 
+        self._base_url = base_url
         self._charset = charset
         self._default_charset = default_charset
 
@@ -715,6 +716,12 @@ class Feed_Parser(xmllib.XMLParser):
 
     def handle_xml(self, encoding, standalone):
         self._set_encoding(encoding)
+
+    def resolve_url(self, url):
+        if url.startswith('/'):
+            return '%s://%s%s' % (self._base_url[0], self._base_url[1], url)
+        else:
+            return url
 
 
     def feed(self, data):
@@ -994,7 +1001,7 @@ class Feed_Parser(xmllib.XMLParser):
         if self._state & 0xfc:
             elem = self._current_elem()
             if elem != None:
-                elem.link = self._cdata
+                elem.link = self.resolve_url(self._cdata)
 
         self._cdata = None
 
@@ -1017,7 +1024,7 @@ class Feed_Parser(xmllib.XMLParser):
             elem = self._current_elem()
             if elem != None and elem.link == '':
                 if attrs.has_key('url'):
-                    elem.link = attrs['url']
+                    elem.link = self.resolve_url(attrs['url'])
 
             self._cdata = ''
 
@@ -1066,7 +1073,7 @@ class Feed_Parser(xmllib.XMLParser):
 
         attr_href = self._get_atom_attr(attrs, 'href')
         if attr_href != None:
-            elem.link = attr_href
+            elem.link = self.resolve_url(attr_href)
 
     def atom_link_end(self):
         pass
@@ -1504,7 +1511,8 @@ class RSS_Resource:
                             # not strictly conforming here...
                             default_charset = 'iso8859-1'
 
-                    rss_parser = Feed_Parser(charset, default_charset)
+                    rss_parser = Feed_Parser((self._url_protocol, self._url_host, self._url_path),
+                                             charset, default_charset)
 
                     bytes_received = 0
                     bytes_processed = 0
