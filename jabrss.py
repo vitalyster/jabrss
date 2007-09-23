@@ -1435,6 +1435,8 @@ class JabberSessionEventHandler:
                     username = row[0]
                     if not subscribers.has_key(username):
                         delete_users.append(username)
+                    else:
+                        subscribers[username] = False
 
                 del cursor
 
@@ -1443,11 +1445,25 @@ class JabberSessionEventHandler:
                     self._delete_user(username)
 
 
+                subscribers = filter(lambda x: x[1] == True,
+                                     subscribers.items())
+                subscribers = map(lambda x: x[0], subscribers)
                 week_nr = get_week_nr()
 
                 cursor = Cursor(db)
-                result = cursor.execute('SELECT jid FROM user LEFT OUTER JOIN user_stat ON (user.uid=user_stat.uid) WHERE start < ? AND since < ?',
-                                        (week_nr - 32, week_nr - 3))
+
+                for username in subscribers:
+                    try:
+                        cursor.execute('INSERT INTO user (jid, conf, store_messages, size_limit, since) VALUES (?, ?, ?, ?, ?)',
+                                       (username, 0, 16, None, week_nr))
+                    except:
+                        pass
+
+                del cursor
+
+                cursor = Cursor(db)
+                result = cursor.execute('SELECT jid FROM user LEFT OUTER JOIN user_stat ON (user.uid=user_stat.uid) WHERE since < ? AND (start < ? OR start IS NULL)',
+                                        (week_nr - 3, week_nr - 32))
                 delete_users = []
                 for row in result:
                     delete_users.append(row[0])
