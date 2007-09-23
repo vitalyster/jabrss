@@ -1456,6 +1456,7 @@ class JabberSessionEventHandler:
 
                 for username in delete_users:
                     print 'user "%s" hasn\'t used the service for more than 40 weeks' % (username.encode('iso8859-1', 'replace'),)
+                    self._remove_user(username)
                     self._delete_user(username)
 
 
