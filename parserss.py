@@ -59,9 +59,23 @@ re_validprotocol = re.compile('^(?P<protocol>[a-z]+):(?P<rest>.*)$')
 re_validhost = re.compile('^(?P<host>[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+)(:(?P<port>[0-9a-z]+))?(?P<path>(/.*)?)$')
 re_blockhost = re.compile('^(10\.|127\.|172\.1[6789]\.|172\.2[0-9]\.|172\.3[01]\.|192\.168\.)')
 
-re_blank = re.compile('([ \\t\\n][ \\t\\n]+|[\x00\x0c\\t\\n])')
-
 re_spliturl = re.compile('^(?P<protocol>[a-z]+)://(?P<host>[^/]+)(?P<path>/?.*)$')
+
+str_trans = string.maketrans(
+    '\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f' +
+    '\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f',
+    '          \x0a                     ')
+
+unicode_trans = {
+    u'\x00' : u' ', u'\x01' : u' ', u'\x02' : u' ', u'\x03' : u' ',
+    u'\x04' : u' ', u'\x05' : u' ', u'\x06' : u' ', u'\x07' : u' ',
+    u'\x08' : u' ', u'\x09' : u' ', u'\x0a' : u'\x0a', u'\x0b' : u' ',
+    u'\x0c' : u' ', u'\x0d' : u' ', u'\x0e' : u' ', u'\x0f' : u' ',
+    u'\x10' : u' ', u'\x11' : u' ', u'\x12' : u' ', u'\x13' : u' ',
+    u'\x14' : u' ', u'\x15' : u' ', u'\x16' : u' ', u'\x17' : u' ',
+    u'\x18' : u' ', u'\x19' : u' ', u'\x1a' : u' ', u'\x1b' : u' ',
+    u'\x1c' : u' ', u'\x1d' : u' ', u'\x1e' : u' ', u'\x1f' : u' '
+    }
 
 random.seed()
 
@@ -153,12 +167,14 @@ def split_url(url):
 
 
 def normalize_text(s):
-    r = re_blank.search(s)
-    while r:
-        s = s[:r.start()] + ' ' + s[r.end():]
-        r = re_blank.search(s)
+    if type(s) == types.UnicodeType:
+        s = s.translate(unicode_trans)
+    else:
+        s = s.translate(str_trans)
 
-    return string.strip(s)
+    s = '\n'.join(filter(lambda x: x != '', map(lambda x: x.strip(), s.split('\n'))))
+    s = ' '.join(filter(lambda x: x != '', s.split(' ')))
+    return s
 
 def normalize_obj(o):
     for attr in dir(o):
@@ -184,6 +200,43 @@ def normalize_item(item):
     del item.descr
 
     return item
+
+
+re_dateTime = re.compile('^(?P<year>[1-9][0-9][0-9][0-9])-(?P<month>[01][0-9])-(?P<day>[0-3][0-9])T(?P<hour>[0-2][0-9]):(?P<min>[0-6][0-9]):(?P<sec>[0-6][0-9])(\\.[0-9]+)?(Z|(?P<tzsign>[-+])(?P<tzhour>[01][0-9]):(?P<tzmin>[0-6][0-9]))$')
+
+def parse_dateTime(s):
+    if s == None:
+        return None
+
+    mo = re_dateTime.match(s)
+    if mo != None:
+        year, month, day, hour, min, sec = map(lambda x: string.atoi(x), mo.group('year', 'month', 'day', 'hour', 'min', 'sec'))
+
+        tzsign, tzhour, tzmin = mo.group('tzsign', 'tzhour', 'tzmin')
+        if tzhour != None and tzmin != None:
+            tzoff = 60*(60*string.atoi(tzhour) + string.atoi(tzmin))
+        else:
+            tzoff = 0
+
+        if tzsign == '-':
+            tzoff = -tzoff
+
+        tstamp = int(rfc822.mktime_tz((year, month, day, hour, min, sec, 0, 0, 0, tzoff)))
+    else:
+        tstamp = None
+
+    return tstamp
+
+def parse_Rfc822DateTime(s):
+    if s == None:
+        return None
+
+    try:
+        tstamp = int(rfc822.mktime_tz(rfc822.parsedate_tz(s)))
+    except:
+        tstamp = None
+
+    return tstamp
 
 
 def compare_items(l, r):
@@ -808,7 +861,10 @@ class Feed_Parser(xmllib.XMLParser):
             (self.rss_description_start, self.rss_description_end),
             # not strictly conforming...
             'description' :
-            (self.rss_description_start, self.rss_description_end)
+            (self.rss_description_start, self.rss_description_end),
+
+            'http://purl.org/dc/elements/1.1/ date' :
+            (self.rss_date_start, self.rss_date_end)
             })
 
     def rss_rdf_end(self):
@@ -878,7 +934,14 @@ class Feed_Parser(xmllib.XMLParser):
             (self.rss_description_start, self.rss_description_end),
 
             'enclosure' :
-            (self.rss_enclosure_start, self.rss_enclosure_end)
+            (self.rss_enclosure_start, self.rss_enclosure_end),
+
+            'pubDate' :
+            (self.rss_pubdate_start, self.rss_pubdate_end),
+            'http://purl.org/rss/2.0/ pubDate' :
+            (self.rss_pubdate_start, self.rss_pubdate_end),
+            'http://purl.org/dc/elements/1.1/ date' :
+            (self.rss_date_start, self.rss_date_end)
             })
 
     def rss_rss_end(self):
@@ -926,7 +989,12 @@ class Feed_Parser(xmllib.XMLParser):
             (self.atom_summary_start, self.atom_summary_end),
 
             'http://purl.org/atom/ns# content' :
-            (self.atom_content_start, self.atom_content_end)
+            (self.atom_content_start, self.atom_content_end),
+
+            'http://purl.org/atom/ns# created' :
+            (self.atom_published_start, self.atom_published_end),
+            'http://purl.org/atom/ns# modified' :
+            (self.atom_updated_start, self.atom_updated_end)
             })
 
         self._state = self._state | 0x04
@@ -955,7 +1023,12 @@ class Feed_Parser(xmllib.XMLParser):
             (self.atom_summary_start, self.atom_summary_end),
 
             'http://www.w3.org/2005/Atom content' :
-            (self.atom_content_start, self.atom_content_end)
+            (self.atom_content_start, self.atom_content_end),
+
+            'http://www.w3.org/2005/Atom published' :
+            (self.atom_published_start, self.atom_published_end),
+            'http://www.w3.org/2005/Atom updated' :
+            (self.atom_updated_start, self.atom_updated_end)
             })
 
         self._state = self._state | 0x04
@@ -974,7 +1047,7 @@ class Feed_Parser(xmllib.XMLParser):
 
     def rss_item_start(self, attrs):
         self._state = self._state | 0x08
-        self._items.append(Data(title='', link='', descr=''))
+        self._items.append(Data(published=None, title='', link='', descr=''))
 
     def rss_item_end(self):
         self._state = self._state & ~0x08
@@ -1020,7 +1093,7 @@ class Feed_Parser(xmllib.XMLParser):
 
 
     def rss_enclosure_start(self, attrs):
-        if self._state & 0xfc:
+        if self._state & 0x8:
             elem = self._current_elem()
             if elem != None and elem.link == '':
                 if attrs.has_key('url'):
@@ -1029,13 +1102,39 @@ class Feed_Parser(xmllib.XMLParser):
             self._cdata = ''
 
     def rss_enclosure_end(self):
-        if self._state & 0xfc:
+        if self._state & 0x8:
+            self._cdata = None
+
+
+    def rss_date_start(self, attrs):
+        if self._state & 0x8:
+            self._cdata = ''
+
+    def rss_date_end(self):
+        if self._state & 0x8:
+            elem = self._current_elem()
+            published = parse_dateTime(self._cdata)
+            if elem != None:
+                elem.published = published
+            self._cdata = None
+
+
+    def rss_pubdate_start(self, attrs):
+        if self._state & 0x8:
+            self._cdata = ''
+
+    def rss_pubdate_end(self):
+        if self._state & 0x8:
+            elem = self._current_elem()
+            published = parse_Rfc822DateTime(self._cdata)
+            if elem != None:
+                elem.published = published
             self._cdata = None
 
 
     def atom_entry_start(self, attrs):
         self._state = (self._state & ~0x04) | 0x08
-        self._items.append(Data(title='', link='', descr=''))
+        self._items.append(Data(published=None, title='', link='', descr=''))
 
     def atom_entry_end(self):
         if self._items[-1].descr == '' and self._summary:
@@ -1135,6 +1234,32 @@ class Feed_Parser(xmllib.XMLParser):
 
         self._cdata = None
         self._content_mode = None
+
+
+    def atom_published_start(self, attrs):
+        if self._state & 0x8:
+            self._cdata = ''
+
+    def atom_published_end(self):
+        if self._state & 0x8:
+            elem = self._current_elem()
+            published = parse_dateTime(self._cdata)
+            if elem != None:
+                elem.published = published
+            self._cdata = None
+
+    def atom_updated_start(self, attrs):
+        if self._state & 0x8:
+            self._cdata = ''
+
+    def atom_updated_end(self):
+        if self._state & 0x8:
+            elem = self._current_elem()
+            published = parse_dateTime(self._cdata)
+            if elem != None and elem.published == None:
+                elem.published = published
+            self._cdata = None
+
 
 
     def unknown_starttag(self, tag, attrs):
@@ -1476,10 +1601,7 @@ class RSS_Resource:
                 if (errcode >= 200) and (errcode < 300):
                     feed_xml_downloaded = True
 
-                    try:
-                        self._last_modified = rfc822.mktime_tz(rfc822.parsedate_tz(headers['last-modified']))
-                    except:
-                        self._last_modified = None
+                    self._last_modified = parse_Rfc822DateTime(headers.get('last-modified', None))
 
                     try:
                         self._etag = headers['etag']
@@ -1560,7 +1682,7 @@ class RSS_Resource:
                     self._update_channel_info(new_channel_info, cursor)
 
                     new_items = map(lambda x: normalize_item(x),
-                                    rss_parser._items[:RSS_Resource.NR_ITEMS])
+                                    rss_parser._items)
                     new_items.reverse()
 
                     items, first_item_id, nr_new_items = self._process_new_items(new_items, cursor)
@@ -1739,11 +1861,10 @@ class RSS_Resource:
 
             i = first_item_id
             for item in items:
-                cursor.execute('INSERT INTO resource_data (rid, seq_nr, title, link, descr_plain, descr_xhtml) VALUES (?, ?, ?, ?, ?, ?)',
+                cursor.execute('INSERT INTO resource_data (rid, seq_nr, published, title, link, descr_plain, descr_xhtml) VALUES (?, ?, ?, ?, ?, ?, ?)',
                                (self._id, i,
-                                item.title, item.link,
-                                item.descr_plain,
-                                item.descr_xhtml))
+                                item.published, item.title, item.link,
+                                item.descr_plain, item.descr_xhtml))
                 i += 1
 
         return items, first_item_id, nr_new_items
@@ -1753,6 +1874,14 @@ class RSS_Resource:
     def _update_items(self, items, new_items):
         nr_old_items = len(items)
         nr_new_items = 0
+
+        if len(items):
+            cutoff = min(map(lambda x: x.published, items))
+        else:
+            cutoff = None
+
+        new_items = filter(lambda x: (x.published == None) or (x.published >= cutoff), new_items)
+        new_items.sort(lambda x, y: cmp(x.published, y.published))
 
         for item in new_items:
             found = False
@@ -1885,11 +2014,12 @@ if __name__ == '__main__':
     import sys
 
     init()
+    db = RSS_Resource_db()
 
-    if len(sys.argv) >= 2:
-        resource = RSS_Resource(sys.argv[1])
+    for url in sys.argv[1:]:
+        resource = RSS_Resource(url, db)
 
-        new_items, next_item_id, redirect_resource, redirect_seq, redirects = resource.update()
+        new_items, next_item_id, redirect_resource, redirect_seq, redirects = resource.update(db)
         channel_info = resource.channel_info()
         print channel_info.title.encode('iso8859-1', 'replace'), channel_info.link.encode('iso8859-1', 'replace'), channel_info.descr.encode('iso8859-1', 'replace')
         error_info = resource.error_info()
@@ -1898,3 +2028,6 @@ if __name__ == '__main__':
 
         if len(new_items) > 0:
             print 'new items', map(lambda x: (x.title.encode('iso8859-1', 'replace'), x.link.encode('iso8859-1', 'replace')), new_items), next_item_id
+
+    db.close()
+    del db
