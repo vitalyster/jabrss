@@ -1875,8 +1875,14 @@ class RSS_Resource:
         nr_old_items = len(items)
         nr_new_items = 0
 
-        if len(items):
-            cutoff = min(map(lambda x: x.published, items))
+        tstamplist = filter(lambda x: x != None,
+                            map(lambda x: x.published, items))
+        tstamplist.sort()
+
+        if (len(tstamplist) > 4) and (len(new_items) > RSS_Resource.NR_ITEMS):
+            cutoff = tstamplist[len(tstamplist) / 2]
+        elif len(tstamplist) > 2:
+            cutoff = tstamplist[0]
         else:
             cutoff = None
 
