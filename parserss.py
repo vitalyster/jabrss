@@ -243,10 +243,10 @@ def compare_items(l, r):
     lguid, ltitle, llink = l.guid, l.title, l.link
     rguid, rtitle, rlink = r.guid, r.title, r.link
 
-    if (lguid != None) and (rguid != None):
-        return lguid == rguid
-
     if ltitle == rtitle:
+        if (lguid != None) and (rguid != None):
+            return lguid == rguid
+
         lmo = re_spliturl.match(llink)
         rmo = re_spliturl.match(rlink)
 
