@@ -124,5 +124,6 @@ CREATE TABLE res.resource_data (
     link TEXT,
     descr_plain TEXT,
     descr_xhtml TEXT,
+    guid TEXT,
     UNIQUE (rid, seq_nr) ON CONFLICT REPLACE
 );

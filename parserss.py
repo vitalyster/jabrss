@@ -240,8 +240,11 @@ def parse_Rfc822DateTime(s):
 
 
 def compare_items(l, r):
-    ltitle, llink = l.title, l.link
-    rtitle, rlink = r.title, r.link
+    lguid, ltitle, llink = l.guid, l.title, l.link
+    rguid, rtitle, rlink = r.guid, r.title, r.link
+
+    if (lguid != None) and (rguid != None):
+        return lguid == rguid
 
     if ltitle == rtitle:
         lmo = re_spliturl.match(llink)
@@ -920,6 +923,12 @@ class Feed_Parser(xmllib.XMLParser):
             'http://purl.org/rss/2.0/ link' :
             (self.rss_link_start, self.rss_link_end),
 
+            'http://www.pheedo.com/namespace/pheedo origLink' :
+            (self.rss_origlink_start, self.rss_origlink_end),
+
+            'http://rssnamespace.org/feedburner/ext/1.0 origLink' :
+            (self.rss_origlink_start, self.rss_origlink_end),
+
             'description' :
             (self.rss_description_start, self.rss_description_end),
             'http://backend.userland.com/rss2 description' :
@@ -935,6 +944,9 @@ class Feed_Parser(xmllib.XMLParser):
 
             'enclosure' :
             (self.rss_enclosure_start, self.rss_enclosure_end),
+
+            'guid' :
+            (self.rss_guid_start, self.rss_guid_end),
 
             'pubDate' :
             (self.rss_pubdate_start, self.rss_pubdate_end),
@@ -991,6 +1003,9 @@ class Feed_Parser(xmllib.XMLParser):
             'http://purl.org/atom/ns# content' :
             (self.atom_content_start, self.atom_content_end),
 
+            'http://purl.org/atom/ns# id' :
+            (self.atom_id_start, self.atom_id_end),
+
             'http://purl.org/atom/ns# created' :
             (self.atom_published_start, self.atom_published_end),
             'http://purl.org/atom/ns# modified' :
@@ -1025,6 +1040,9 @@ class Feed_Parser(xmllib.XMLParser):
             'http://www.w3.org/2005/Atom content' :
             (self.atom_content_start, self.atom_content_end),
 
+            'http://www.w3.org/2005/Atom id' :
+            (self.atom_id_start, self.atom_id_end),
+
             'http://www.w3.org/2005/Atom published' :
             (self.atom_published_start, self.atom_published_end),
             'http://www.w3.org/2005/Atom updated' :
@@ -1046,10 +1064,20 @@ class Feed_Parser(xmllib.XMLParser):
 
 
     def rss_item_start(self, attrs):
+        if attrs.has_key('http://www.w3.org/1999/02/22-rdf-syntax-ns# about'):
+            guid = attrs['http://www.w3.org/1999/02/22-rdf-syntax-ns# about']
+        else:
+            guid = None
+
         self._state = self._state | 0x08
-        self._items.append(Data(published=None, title='', link='', descr=''))
+        self._items.append(Data(guid=guid, published=None, title='', link='', descr=''))
 
     def rss_item_end(self):
+        elem = self._current_elem()
+        if (elem != None) and hasattr(elem, 'origlink'):
+            elem.link = elem.origlink
+            delattr(elem, 'origlink')
+
         self._state = self._state & ~0x08
 
 
@@ -1079,6 +1107,19 @@ class Feed_Parser(xmllib.XMLParser):
         self._cdata = None
 
 
+    def rss_origlink_start(self, attrs):
+        if self._state & 0xfc:
+            self._cdata = ''
+
+    def rss_origlink_end(self):
+        if self._state & 0xfc:
+            elem = self._current_elem()
+            if elem != None:
+                elem.origlink = self.resolve_url(self._cdata)
+
+        self._cdata = None
+
+
     def rss_description_start(self, attrs):
         if self._state & 0xfc:
             self._cdata = ''
@@ -1090,6 +1131,19 @@ class Feed_Parser(xmllib.XMLParser):
                 elem.descr = self._cdata
 
         self._cdata = None
+
+
+    def rss_guid_start(self, attrs):
+        if self._state & 0x8:
+            self._cdata = ''
+
+    def rss_guid_end(self):
+        if self._state & 0x8:
+            elem = self._current_elem()
+            if elem != None:
+                elem.guid = self._cdata
+
+            self._cdata = None
 
 
     def rss_enclosure_start(self, attrs):
@@ -1134,7 +1188,7 @@ class Feed_Parser(xmllib.XMLParser):
 
     def atom_entry_start(self, attrs):
         self._state = (self._state & ~0x04) | 0x08
-        self._items.append(Data(published=None, title='', link='', descr=''))
+        self._items.append(Data(guid=None, published=None, title='', link='', descr=''))
 
     def atom_entry_end(self):
         if self._items[-1].descr == '' and self._summary:
@@ -1234,6 +1288,18 @@ class Feed_Parser(xmllib.XMLParser):
 
         self._cdata = None
         self._content_mode = None
+
+
+    def atom_id_start(self, attrs):
+        if self._state & 0x8:
+            self._cdata = ''
+
+    def atom_id_end(self):
+        if self._state & 0x8:
+            elem = self._current_elem()
+            if elem != None:
+                elem.guid = self._cdata
+            self._cdata = None
 
 
     def atom_published_start(self, attrs):
@@ -1861,10 +1927,10 @@ class RSS_Resource:
 
             i = first_item_id
             for item in items:
-                cursor.execute('INSERT INTO resource_data (rid, seq_nr, published, title, link, descr_plain, descr_xhtml) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                cursor.execute('INSERT INTO resource_data (rid, seq_nr, published, title, link, guid, descr_plain, descr_xhtml) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                                (self._id, i,
                                 item.published, item.title, item.link,
-                                item.descr_plain, item.descr_xhtml))
+                                item.guid, item.descr_plain, item.descr_xhtml))
                 i += 1
 
         return items, first_item_id, nr_new_items
@@ -1917,15 +1983,15 @@ class RSS_Resource:
         if first_id == None:
             first_id = 0
 
-        result = cursor.execute('SELECT seq_nr, published, title, link, descr_plain, descr_xhtml FROM resource_data WHERE rid=? AND seq_nr>=? ORDER BY seq_nr',
+        result = cursor.execute('SELECT seq_nr, published, title, link, guid, descr_plain, descr_xhtml FROM resource_data WHERE rid=? AND seq_nr>=? ORDER BY seq_nr',
                                 (self._id, first_id))
         items = []
         last_id = first_id
-        for seq_nr, published, title, link, descr_plain, descr_xhtml in result:
+        for seq_nr, published, title, link, guid, descr_plain, descr_xhtml in result:
             if seq_nr >= last_id:
                 last_id = seq_nr + 1
             items.append(Data(published=published, title=title, link=link,
-                              descr_plain=descr_plain,
+                              guid=guid, descr_plain=descr_plain,
                               descr_xhtml=descr_xhtml))
 
         del cursor
