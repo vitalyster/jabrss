@@ -1958,7 +1958,7 @@ class RSS_Resource:
         for item in new_items:
             found = False
 
-            for i in range(0, nr_old_items):
+            for i in range(0, len(items)):
                 if compare_items(items[i], item):
                     items[i] = item
                     found = True
