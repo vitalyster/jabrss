@@ -775,9 +775,10 @@ class Feed_Parser(xmllib.XMLParser):
 
     def resolve_url(self, url):
         if url.startswith('/'):
-            return '%s://%s%s' % (self._base_url[0], self._base_url[1], url)
+            return '%s://%s%s' % (self._base_url[0], self._base_url[1],
+                                  url.encode('ascii'))
         else:
-            return url
+            return url.encode('ascii')
 
 
     def feed(self, data):
