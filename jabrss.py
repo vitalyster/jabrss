@@ -18,7 +18,7 @@
 
 import bisect, getopt, os, string, struct, sys, thread, threading, time
 import traceback
-import apsw
+import sqlite3
 import xpcom.components
 
 import parserss
@@ -172,8 +172,8 @@ class Resource_Guard:
         self._cleanup_handler()
 
 def get_db():
-    db = apsw.Connection('jabrss.db')
-    db.setbusytimeout(60000)
+    db = sqlite3.Connection('jabrss.db', 60000)
+    db.isolation_level = None
     db.cursor().execute('PRAGMA synchronous=NORMAL')
 
     return db
@@ -188,7 +188,7 @@ class Cursor:
     def __del__(self):
         try:
             if self._txn:
-                self._cursor.execute('END')
+                self._cursor.execute('COMMIT')
         finally:
             db_sync.release()
 
@@ -205,6 +205,14 @@ class Cursor:
 
     def next(self):
         return self._cursor.next()
+
+    def __getattr__(self, name):
+        if name == 'lastrowid':
+            return self._cursor.lastrowid
+        elif name == 'rowcount':
+            return self._cursor.rowcount
+
+        raise AttributeError('object has no attribute \'%s\'' % (name,))
 
 
 db = get_db()
@@ -542,7 +550,7 @@ class JabberUser:
         except StopIteration:
             cursor.execute('INSERT INTO user (jid, conf, store_messages, size_limit, since) VALUES (?, ?, ?, ?, ?)',
                            (self._jid, self._configuration, self._store_messages, self._size_limit, get_week_nr()))
-            self._uid = db.last_insert_rowid()
+            self._uid = cursor.lastrowid
 
         if self._size_limit == None:
             self._size_limit = 0

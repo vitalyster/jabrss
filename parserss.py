@@ -18,7 +18,7 @@
 
 import codecs, httplib, md5, rfc822, os, random, re, socket, string, struct
 import sys, time, thread, traceback, types, zlib
-import apsw
+import sqlite3
 
 import warnings
 warnings.filterwarnings('ignore',
@@ -81,8 +81,8 @@ random.seed()
 
 
 def RSS_Resource_db():
-    db = apsw.Connection(DB_FILENAME)
-    db.setbusytimeout(60000)
+    db = sqlite3.Connection(DB_FILENAME, 60000)
+    db.isolation_level = None
     db.cursor().execute('PRAGMA synchronous=NORMAL')
 
     return db
@@ -298,7 +298,8 @@ class Cursor:
     def __del__(self):
         try:
             if self._txn:
-                self._cursor.execute('END')
+                self._cursor.execute('COMMIT')
+                pass
         finally:
             if self._locked:
                 RSS_Resource._db_sync.release()
@@ -306,7 +307,7 @@ class Cursor:
 
     def unlock(self):
         if self._txn:
-            self._cursor.execute('END')
+            self._cursor.execute('COMMIT')
             self._txn = False
 
         if self._locked:
@@ -333,6 +334,13 @@ class Cursor:
         else:
             return self._cursor.execute(stmt, bindings)
 
+    def __getattr__(self, name):
+        if name == 'lastrowid':
+            return self._cursor.lastrowid
+        elif name == 'rowcount':
+            return self._cursor.rowcount
+
+        raise AttributeError('object has no attribute \'%s\'' % (name,))
 
     def getdb(self):
         return self._cursor.getconnection()
@@ -1443,7 +1451,7 @@ class RSS_Resource:
         if self._id == None:
             cursor.execute('INSERT INTO resource (url) VALUES (?)',
                            (self._url,))
-            self._id = db.last_insert_rowid()
+            self._id = cursor.lastrowid
 
         if self._last_updated == None:
             self._last_updated = 0
@@ -1744,7 +1752,7 @@ class RSS_Resource:
                     hash_buffer = buffer(file_hash.digest())
                     cursor.execute('UPDATE resource SET hash=? WHERE rid=? AND (hash IS NULL OR hash<>?)',
                                    (hash_buffer, self._id, hash_buffer))
-                    feed_xml_changed = (db.changes() != 0)
+                    feed_xml_changed = (cursor.rowcount != 0)
 
                     self._update_channel_info(new_channel_info, cursor)
 
