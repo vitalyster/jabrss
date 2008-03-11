@@ -134,8 +134,8 @@ CREATE TABLE res.resource_data (
     UNIQUE (rid, seq_nr) ON CONFLICT REPLACE
 );
 
-CREATE TRIGGER res.resource_delete AFTER DELETE ON res.resource
+CREATE TRIGGER res.resource_delete AFTER DELETE ON resource
     FOR EACH ROW BEGIN
-        DELETE FROM res.resource_history WHERE rid=old.rid;
-        DELETE FROM res.resource_data WHERE rid=old.rid;
+        DELETE FROM resource_history WHERE rid=old.rid;
+        DELETE FROM resource_data WHERE rid=old.rid;
     END;
