@@ -1,5 +1,5 @@
 #!/usr/bin/python
-# Copyright (C) 2001-2006, Christof Meerwald
+# Copyright (C) 2001-2008, Christof Meerwald
 # http://jabrss.cmeerw.org
 
 # This program is free software; you can redistribute it and/or modify
@@ -466,10 +466,6 @@ class DataStorage:
         cursor.begin()
 
         try:
-            cursor.execute('DELETE FROM user_stat WHERE uid=?',
-                           (user.uid(),))
-            cursor.execute('DELETE FROM user_resource WHERE uid=?',
-                           (user.uid(),))
             cursor.execute('DELETE FROM user WHERE uid=?',
                            (user.uid(),))
         finally:

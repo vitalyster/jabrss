@@ -1,5 +1,5 @@
 -- -*- SQL -*-
--- Copyright (C) 2004-2005, Christof Meerwald
+-- Copyright (C) 2004-2008, Christof Meerwald
 -- http://jabrss.cmeerw.org
 
 -- This program is free software; you can redistribute it and/or modify
@@ -57,6 +57,12 @@ CREATE TABLE user_resource (
 
 CREATE INDEX user_resource_rid ON
     user_resource (rid);
+
+CREATE TRIGGER user_delete AFTER DELETE ON user
+    FOR EACH ROW BEGIN
+        DELETE FROM user_resource WHERE uid=old.uid;
+        DELETE FROM user_stat WHERE uid=old.uid;
+    END;
 
 
 ATTACH DATABASE "jabrss_res.db" AS res;
@@ -127,3 +133,9 @@ CREATE TABLE res.resource_data (
     guid TEXT,
     UNIQUE (rid, seq_nr) ON CONFLICT REPLACE
 );
+
+CREATE TRIGGER res.resource_delete AFTER DELETE ON res.resource
+    FOR EACH ROW BEGIN
+        DELETE FROM res.resource_history WHERE rid=old.rid;
+        DELETE FROM res.resource_data WHERE rid=old.rid;
+    END;
