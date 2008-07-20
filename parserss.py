@@ -1955,7 +1955,8 @@ class RSS_Resource:
         tstamplist.sort()
 
         if (len(tstamplist) > 4) and (len(new_items) > RSS_Resource.NR_ITEMS):
-            cutoff = tstamplist[len(tstamplist) / 2]
+            tstamplist = tstamplist[len(tstamplist) / 2 : -len(tstamplist) / 6]
+            cutoff = sum(tstamplist) / len(tstamplist)
         elif len(tstamplist) > 2:
             cutoff = tstamplist[0]
         else:
