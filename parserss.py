@@ -1227,10 +1227,7 @@ class Feed_Parser(xmllib.XMLParser):
         attr_type = self._get_atom_attr(attrs, 'type')
 
         if elem.link:
-            if (self._format == 'atom03') and (attr_type != None) and (attr_type != 'text/html'):
-                return
-
-            if (self._format == 'atom10') and (attr_type != None) and (attr_type != 'html') and (attr_type != 'xhtml'):
+            if (attr_type != None) and (attr_type != 'text/html') and (attr_type != 'application/xhtml+xml') and (attr_type != 'xhtml') and (attr_type != 'html'):
                 return
 
         attr_href = self._get_atom_attr(attrs, 'href')
