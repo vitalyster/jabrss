@@ -920,6 +920,9 @@ class DummyJabberUser(JabberUser):
         res_id = resource.id()
         print 'dummy removing res', res_id, len(self._res_ids)
 
+        if len(self._res_ids) == 0:
+            return
+
         self._res_ids.remove(res_id)
 
         # also update storage res->uid mapping
