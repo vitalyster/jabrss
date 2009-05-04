@@ -20,6 +20,8 @@ import codecs, httplib, md5, rfc822, os, random, re, socket, string, struct
 import sys, time, thread, traceback, types, zlib
 import sqlite3
 
+from array import array
+
 import warnings
 warnings.filterwarnings('ignore',
                         category=DeprecationWarning,
@@ -746,13 +748,13 @@ class Feed_Parser(xmllib.XMLParser):
         self._bytes = 0
 
         self._state = 0
-        self._cdata = None
         self._content_mode = None
         self._summary = None
 
         self._channel = Data(title='', link='', descr='')
         self._items = []
 
+        self._reset_cdata()
         self._set_encoding(None)
 
     def _set_encoding(self, encoding):
@@ -1092,67 +1094,67 @@ class Feed_Parser(xmllib.XMLParser):
 
     def rss_title_start(self, attrs):
         if self._state & 0xfc:
-            self._cdata = ''
+            self._reset_cdata('')
 
     def rss_title_end(self):
         if self._state & 0xfc:
             elem = self._current_elem()
             if elem != None:
-                elem.title = self._cdata
+                elem.title = self.cdata()
 
-        self._cdata = None
+        self._reset_cdata()
 
 
     def rss_link_start(self, attrs):
         if self._state & 0xfc:
-            self._cdata = ''
+            self._reset_cdata('')
 
     def rss_link_end(self):
         if self._state & 0xfc:
             elem = self._current_elem()
             if elem != None:
-                elem.link = self.resolve_url(self._cdata)
+                elem.link = self.resolve_url(self.cdata())
 
-        self._cdata = None
+        self._reset_cdata()
 
 
     def rss_origlink_start(self, attrs):
         if self._state & 0xfc:
-            self._cdata = ''
+            self._reset_cdata('')
 
     def rss_origlink_end(self):
         if self._state & 0xfc:
             elem = self._current_elem()
             if elem != None:
-                elem.origlink = self.resolve_url(self._cdata)
+                elem.origlink = self.resolve_url(self.cdata())
 
-        self._cdata = None
+        self._reset_cdata()
 
 
     def rss_description_start(self, attrs):
         if self._state & 0xfc:
-            self._cdata = ''
+            self._reset_cdata('')
 
     def rss_description_end(self):
         if self._state & 0xfc:
             elem = self._current_elem()
             if elem != None:
-                elem.descr = self._cdata
+                elem.descr = self.cdata()
 
-        self._cdata = None
+        self._reset_cdata()
 
 
     def rss_guid_start(self, attrs):
         if self._state & 0x8:
-            self._cdata = ''
+            self._reset_cdata('')
 
     def rss_guid_end(self):
         if self._state & 0x8:
             elem = self._current_elem()
             if elem != None:
-                elem.guid = self._cdata
+                elem.guid = self.cdata()
 
-            self._cdata = None
+            self._reset_cdata()
 
 
     def rss_enclosure_start(self, attrs):
@@ -1162,37 +1164,37 @@ class Feed_Parser(xmllib.XMLParser):
                 if attrs.has_key('url'):
                     elem.link = self.resolve_url(attrs['url'])
 
-            self._cdata = ''
+            self._reset_cdata('')
 
     def rss_enclosure_end(self):
         if self._state & 0x8:
-            self._cdata = None
+            self._reset_cdata()
 
 
     def rss_date_start(self, attrs):
         if self._state & 0x8:
-            self._cdata = ''
+            self._reset_cdata('')
 
     def rss_date_end(self):
         if self._state & 0x8:
             elem = self._current_elem()
-            published = parse_dateTime(self._cdata)
+            published = parse_dateTime(self.cdata())
             if elem != None:
                 elem.published = published
-            self._cdata = None
+            self._reset_cdata()
 
 
     def rss_pubdate_start(self, attrs):
         if self._state & 0x8:
-            self._cdata = ''
+            self._reset_cdata('')
 
     def rss_pubdate_end(self):
         if self._state & 0x8:
             elem = self._current_elem()
-            published = parse_Rfc822DateTime(self._cdata)
+            published = parse_Rfc822DateTime(self.cdata())
             if elem != None:
                 elem.published = published
-            self._cdata = None
+            self._reset_cdata()
 
 
     def atom_entry_start(self, attrs):
@@ -1208,15 +1210,15 @@ class Feed_Parser(xmllib.XMLParser):
 
     def atom_title_start(self, attrs):
         if self._state & 0xfc:
-            self._cdata = ''
+            self._reset_cdata('')
 
     def atom_title_end(self):
         if self._state & 0xfc:
             elem = self._current_elem()
             if elem != None:
-                elem.title = self._cdata
+                elem.title = self.cdata()
 
-        self._cdata = None
+        self._reset_cdata()
 
 
     def atom_link_start(self, attrs):
@@ -1240,7 +1242,7 @@ class Feed_Parser(xmllib.XMLParser):
 
     def atom_subtitle_start(self, attrs):
         if self._state & 0x04:
-            self._cdata = ''
+            self._reset_cdata('')
             if self._format == 'atom03':
                 attr_mode = self._get_atom_attr(attrs, 'mode')
                 if attr_mode != None:
@@ -1248,19 +1250,20 @@ class Feed_Parser(xmllib.XMLParser):
 
     def atom_subtitle_end(self):
         if self._state & 0x04:
+            cdata = self.cdata()
             if self._content_mode == 'base64':
-                self._cdata = self._cdata.decode('base64')
+                cdata = cdata.decode('base64')
             elem = self._current_elem()
             if elem != None:
-                elem.descr = self._cdata
+                elem.descr = cdata
 
-        self._cdata = None
+        self._reset_cdata()
         self._content_mode = None
 
 
     def atom_content_start(self, attrs):
         if self._state & 0x08:
-            self._cdata = ''
+            self._reset_cdata('')
             if self._format == 'atom03':
                 attr_mode = self._get_atom_attr(attrs, 'mode')
                 if attr_mode != None:
@@ -1268,19 +1271,20 @@ class Feed_Parser(xmllib.XMLParser):
 
     def atom_content_end(self):
         if self._state & 0x08:
+            cdata = self.cdata()
             if self._content_mode == 'base64':
-                self._cdata = self._cdata.decode('base64')
+                cdata = cdata.decode('base64')
             elem = self._current_elem()
             if elem != None and elem != '':
-                elem.descr = self._cdata
+                elem.descr = cdata
 
-        self._cdata = None
+        self._reset_cdata()
         self._content_mode = None
 
 
     def atom_summary_start(self, attrs):
         if self._state & 0x08:
-            self._cdata = ''
+            self._reset_cdata('')
             if self._format == 'atom03':
                 attr_mode = self._get_atom_attr(attrs, 'mode')
                 if attr_mode != None:
@@ -1288,49 +1292,50 @@ class Feed_Parser(xmllib.XMLParser):
 
     def atom_summary_end(self):
         if self._state & 0x08:
+            cdata = self.cdata()
             if self._content_mode == 'base64':
-                self._cdata = self._cdata.decode('base64')
-            self._summary = self._cdata
+                cdata = cdata.decode('base64')
+            self._summary = cdata
 
-        self._cdata = None
+        self._reset_cdata()
         self._content_mode = None
 
 
     def atom_id_start(self, attrs):
         if self._state & 0x8:
-            self._cdata = ''
+            self._reset_cdata('')
 
     def atom_id_end(self):
         if self._state & 0x8:
             elem = self._current_elem()
             if elem != None:
-                elem.guid = self._cdata
-            self._cdata = None
+                elem.guid = self.cdata()
+            self._reset_cdata()
 
 
     def atom_published_start(self, attrs):
         if self._state & 0x8:
-            self._cdata = ''
+            self._reset_cdata('')
 
     def atom_published_end(self):
         if self._state & 0x8:
             elem = self._current_elem()
-            published = parse_dateTime(self._cdata)
+            published = parse_dateTime(self.cdata())
             if elem != None:
                 elem.published = published
-            self._cdata = None
+            self._reset_cdata()
 
     def atom_updated_start(self, attrs):
         if self._state & 0x8:
-            self._cdata = ''
+            self._reset_cdata('')
 
     def atom_updated_end(self):
         if self._state & 0x8:
             elem = self._current_elem()
-            published = parse_dateTime(self._cdata)
+            published = parse_dateTime(self.cdata())
             if elem != None and elem.published == None:
                 elem.published = published
-            self._cdata = None
+            self._reset_cdata()
 
 
 
@@ -1362,17 +1367,48 @@ class Feed_Parser(xmllib.XMLParser):
         if (self._cdata != None) and (tag[:29] == 'http://www.w3.org/1999/xhtml '):
             self._cdata += '</' + tag[29:] + '>'
 
-    def handle_unicode_data(self, data):
+    def _reset_cdata(self, data=None):
+        if data != None:
+            if data == '':
+                self._cdata = []
+                self._cdatalen = 0
+            else:
+                self._cdata = [data]
+                self._cdatalen = len(data)
+        else:
+            self._cdata = None
+            self._cdatalen = None
+
+    def _append_cdata(self, data):
         if self._cdata != None:
-            self._cdata += data
-            if len(self._cdata) > 64 * 1024:
+            self._cdatalen += len(data)
+            if self._cdatalen > 64 * 1024:
                 raise ValueError('item exceeds maximum allowed size')
 
+            if len(self._cdata):
+                if type(self._cdata[-1]) == type(data):
+                    self._cdata[-1] += data
+            else:
+                self._cdata.append(data)
+
+    def cdata(self):
+        if self._cdata == None:
+            return None
+
+        s = array('u')
+        for elem in self._cdata:
+            if type(elem) == types.StringType:
+                s.extend(elem.decode(self._encoding))
+            else:
+                s.extend(elem)
+
+        return s.tounicode()
+
     def handle_data(self, data):
-        self.handle_unicode_data(data.decode(self._encoding))
+        self._append_cdata(data)
 
     def handle_cdata(self, data):
-        self.handle_unicode_data(data.decode(self._encoding))
+        self._append_cdata(data)
 
     def handle_charref(self, name):
         try:
@@ -1386,11 +1422,11 @@ class Feed_Parser(xmllib.XMLParser):
         if not 0 <= n <= 65535:
             self.unknown_charref(name)
             return
-        self.handle_unicode_data(unichr(n))
+        self._append_cdata(unichr(n))
 
     def unknown_entityref(self, entity):
         try:
-            self.handle_unicode_data(ENTITIES[entity])
+            self._append_cdata(ENTITIES[entity])
         except KeyError:
             log_message('ignoring unknown entity ref', entity.encode('iso8859-1', 'replace'))
 
