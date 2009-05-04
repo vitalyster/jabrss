@@ -1388,6 +1388,8 @@ class Feed_Parser(xmllib.XMLParser):
             if len(self._cdata):
                 if type(self._cdata[-1]) == type(data):
                     self._cdata[-1] += data
+                else:
+                    self._cdata.append(data)
             else:
                 self._cdata.append(data)
 
