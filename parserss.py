@@ -804,7 +804,7 @@ class Feed_Parser(xmllib.XMLParser):
                 self._encoding = 'utf-8'
                 data = data[4:]
             elif data[:3] == '\xef\xbb\xbf':
-                self._feed_encoding = 'utf-8'
+                self._feed_encoding = None
                 self._encoding = 'utf-8'
                 data = data[3:]
             elif data[:2] == codecs.BOM32_LE:
