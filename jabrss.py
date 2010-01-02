@@ -74,6 +74,7 @@ JABBER_USER = None
 JABBER_PASSWORD = None
 MIGRATE_FROM = None
 MIGRATE_TO = None
+MAX_MESSAGE_SIZE = 20000
 
 
 opts, args = getopt.getopt(sys.argv[1:], 'f:h:p:s:u:',
@@ -1708,27 +1709,36 @@ class JabberSessionEventHandler:
         subject_text = self._format_header(channel_info.title, channel_info.link, resource.url(), subject_format)
 
         if message_type == 0 or message_type == 2: # normal message or chat
-            body = ''
+            body = []
+            msgs, l = [body], 0
             header_text = self._format_header(channel_info.title, channel_info.link, resource.url(), header_format)
             if header_text != '':
-                body += '[ %s ]\n' % (header_text,)
+                body.append('[ %s ]\n' % (header_text,))
+                l += len(body[-1])
 
             if not not_stored and (len(items) > user.get_store_messages()):
-                body += ('%d headlines suppressed (from %s)\n' % (len(items) - user.get_store_messages(), channel_info.title))
+                body.append('%d headlines suppressed (from %s)\n' % (len(items) - user.get_store_messages(), channel_info.title))
                 items = items[-user.get_store_messages():]
 
             if body != '':
-                body += '\n'
+                body.append('\n')
+                l += len(body[-1])
 
             for item in items:
                 try:
                     title, link, descr = (item.title, item.link, item.descr_plain)
                     
                     if not descr or (descr == title):
-                        body = body + ('%s\n%s\n\n' % (title, link))
+                        body.append('%s\n%s\n' % (title, link))
                     else:
-                        body = body + ('%s\n%s\n%s\n\n' % (title, link,
-                                                           descr[:user.get_size_limit()]))
+                        body.append('%s\n%s\n%s\n' % (title, link,
+                                                      descr[:user.get_size_limit()]))
+                    l += len(body[-1]) + 1
+                    body.append('\n')
+
+                    if l >= MAX_MESSAGE_SIZE:
+                        body = []
+                        msgs.append(body)
                 except ValueError:
                     print 'trying to unpack tuple of wrong size', repr(item)
 
@@ -1736,9 +1746,14 @@ class JabberSessionEventHandler:
                 mt = jabIConstMessage.mtNormal
             else:
                 mt = jabIConstMessage.mtChat
-            message = jab_session.createMessage(user.jid(), body, mt)
-            message.setSubject(channel_info.title)
-            jab_session.sendPacket(message)
+
+            for body in msgs:
+                if body:
+                    message = jab_session.createMessage(user.jid(),
+                                                        ''.join(body), mt)
+                    message.setSubject(channel_info.title)
+                    jab_session.sendPacket(message)
+
         elif message_type == 1:         # headline
             if not not_stored and (len(items) > user.get_store_messages()):
                 message = jab_session.createMessage(user.jid(),

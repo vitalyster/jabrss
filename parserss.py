@@ -1,5 +1,5 @@
 #!/usr/bin/python
-# Copyright (C) 2001-2008, Christof Meerwald
+# Copyright (C) 2001-2009, Christof Meerwald
 # http://jabrss.cmeerw.org
 
 # This program is free software; you can redistribute it and/or modify
@@ -16,8 +16,8 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
 # USA
 
-import codecs, httplib, md5, rfc822, os, random, re, socket, string, struct
-import sys, time, thread, traceback, types, zlib
+import codecs, hashlib, rfc822, os, random, re, socket, string, struct
+import sys, time, threading, traceback, types, zlib
 import sqlite3
 
 from array import array
@@ -27,6 +27,11 @@ warnings.filterwarnings('ignore',
                         category=DeprecationWarning,
                         message='The xmllib module is obsolete.  Use xml.sax instead.')
 import xmllib
+
+if sys.version_info[0] == 2:
+    import httplib
+else:
+    import http.client as httplib
 
 SOCKET_CONNECTTIMEOUT = 60
 SOCKET_TIMEOUT = 60
@@ -420,10 +425,10 @@ class Deflate_Decompressor:
                 self._update_adler32(res)
                 data += res
             elif res == '' and self._state_feed != None:
-                raise IOError, 'premature EOF'
+                raise IOError('premature EOF')
 
         if len(self._buffer):
-            raise IOError, 'extra data at end of compressed data'
+            raise IOError('extra data at end of compressed data')
 
         return data
 
@@ -509,10 +514,10 @@ class Gzip_Decompressor:
                 self._update_crc32(res)
                 data += res
             elif res == '' and self._state_feed != None:
-                raise IOError, 'premature EOF'
+                raise IOError('premature EOF')
 
         if len(self._buffer):
-            raise IOError, 'extra data at end of compressed data'
+            raise IOError('extra data at end of compressed data')
 
         return data
 
@@ -520,10 +525,10 @@ class Gzip_Decompressor:
         if len(self._buffer) >= 10:
             magic = self._buffer[:2]
             if magic != '\037\213':
-                raise IOError, 'Not a gzipped file'
+                raise IOError('Not a gzipped file')
             method = ord(self._buffer[2])
             if method != 8:
-                raise IOError, 'Unknown compression method'
+                raise IOError('Unknown compression method')
             self._header_flag = ord(self._buffer[3])
             # modtime = self.fileobj.read(4)
             # extraflag = self.fileobj.read(1)
@@ -593,7 +598,7 @@ class Gzip_Decompressor:
     def _feed_eof(self):
         if len(self._buffer) >= 8:
             crc32, isize = struct.unpack("<ll", self._buffer[:8])
-            if crc32 % 0x100000000L != self._crc % 0x100000000L:
+            if crc32 % 0x100000000 != self._crc % 0x100000000:
                 raise DecompressorError('CRC check failed')
             elif isize != self._size:
                 raise DecompressorError('Incorrect length of data produced')
@@ -604,102 +609,102 @@ class Gzip_Decompressor:
 
 
 ENTITIES = {
-    'nbsp' : u'\u00a0',
-    'iexcl' : u'\u00a1',
-    'cent' : u'\u00a2',
-    'pound' : u'\u00a3',
-    'curren' : u'\u00a4',
-    'yen' : u'\u00a5',
-    'brvbar' : u'\u00a6',
-    'sect' : u'\u00a7',
-    'uml' : u'\u00a8',
-    'copy' : u'\u00a9',
-    'ordf' : u'\u00aa',
-    'laquo' : u'\u00ab',
-    'not' : u'\u00ac',
-    'shy' : u'\u00ad',
-    'reg' : u'\u00ae',
-    'macr' : u'\u00af',
-    'deg' : u'\u00b0',
-    'plusmn' : u'\u00b1',
-    'sup2' : u'\u00b2',
-    'sup3' : u'\u00b3',
-    'acute' : u'\u00b4',
-    'micro' : u'\u00b5',
-    'para' : u'\u00b6',
-    'middot' : u'\u00b7',
-    'cedil' : u'\u00b8',
-    'sup1' : u'\u00b9',
-    'ordm' : u'\u00ba',
-    'raquo' : u'\u00bb',
-    'frac14' : u'\u00bc',
-    'frac12' : u'\u00bd',
-    'frac34' : u'\u00be',
-    'iquest' : u'\u00bf',
-    'Agrave' : u'\u00c0',
-    'Aacute' : u'\u00c1',
-    'Acirc' : u'\u00c2',
-    'Atilde' : u'\u00c3',
-    'Auml' : u'\u00c4',
-    'Aring' : u'\u00c5',
-    'AElig' : u'\u00c6',
-    'Ccedil' : u'\u00c7',
-    'Egrqave' : u'\u00c8',
-    'Eacute' : u'\u00c9',
-    'Ecirc' : u'\u00ca',
-    'Euml' : u'\u00cb',
-    'Igrave' : u'\u00cc',
-    'Iacute' : u'\u00cd',
-    'Icirc' : u'\u00ce',
-    'Iuml' : u'\u00cf',
-    'ETH' : u'\u00d0',
-    'Ntilde' : u'\u00d1',
-    'Ograve' : u'\u00d2',
-    'Oacute' : u'\u00d3',
-    'Ocirc' : u'\u00d4',
-    'Otilde' : u'\u00d5',
-    'Ouml' : u'\u00d6',
-    'times' : u'\u00d7',
-    'Oslash' : u'\u00d8',
-    'Ugrave' : u'\u00d9',
-    'Uacute' : u'\u00da',
-    'Ucirc' : u'\u00db',
-    'Uuml' : u'\u00dc',
-    'Yacute' : u'\u00dd',
-    'THORN' : u'\u00de',
-    'szlig' : u'\u00df',
-    'agrave' : u'\u00e0',
-    'aacute' : u'\u00e1',
-    'acirc' : u'\u00e2',
-    'atilde' : u'\u00e3',
-    'auml' : u'\u00e4',
-    'aring' : u'\u00e5',
-    'aelig' : u'\u00e6',
-    'ccedil' : u'\u00e7',
-    'egrave' : u'\u00e8',
-    'eacute' : u'\u00e9',
-    'ecirc' : u'\u00ea',
-    'euml' : u'\u00eb',
-    'igrave' : u'\u00ec',
-    'iacute' : u'\u00ed',
-    'icirc' : u'\u00ee',
-    'iuml' : u'\u00ef',
-    'eth' : u'\u00f0',
-    'ntilde' : u'\u00f1',
-    'ograve' : u'\u00f2',
-    'oacute' : u'\u00f3',
-    'ocirc' : u'\u00f4',
-    'otilde' : u'\u00f5',
-    'ouml' : u'\u00f6',
-    'divide' : u'\u00f7',
-    'oslash' : u'\u00f8',
-    'ugrave' : u'\u00f9',
-    'uacute' : u'\u00fa',
-    'ucirc' : u'\u00fb',
-    'uuml' : u'\u00fc',
-    'yacute' : u'\u00fd',
-    'thorn' : u'\u00fe',
-    'yuml' : u'\u00ff',
+    'nbsp' : '\xa0',
+    'iexcl' : '\xa1',
+    'cent' : '\xa2',
+    'pound' : '\xa3',
+    'curren' : '\xa4',
+    'yen' : '\xa5',
+    'brvbar' : '\xa6',
+    'sect' : '\xa7',
+    'uml' : '\xa8',
+    'copy' : '\xa9',
+    'ordf' : '\xaa',
+    'laquo' : '\xab',
+    'not' : '\xac',
+    'shy' : '\xad',
+    'reg' : '\xae',
+    'macr' : '\xaf',
+    'deg' : '\xb0',
+    'plusmn' : '\xb1',
+    'sup2' : '\xb2',
+    'sup3' : '\xb3',
+    'acute' : '\xb4',
+    'micro' : '\xb5',
+    'para' : '\xb6',
+    'middot' : '\xb7',
+    'cedil' : '\xb8',
+    'sup1' : '\xb9',
+    'ordm' : '\xba',
+    'raquo' : '\xbb',
+    'frac14' : '\xbc',
+    'frac12' : '\xbd',
+    'frac34' : '\xbe',
+    'iquest' : '\xbf',
+    'Agrave' : '\xc0',
+    'Aacute' : '\xc1',
+    'Acirc' : '\xc2',
+    'Atilde' : '\xc3',
+    'Auml' : '\xc4',
+    'Aring' : '\xc5',
+    'AElig' : '\xc6',
+    'Ccedil' : '\xc7',
+    'Egrqave' : '\xc8',
+    'Eacute' : '\xc9',
+    'Ecirc' : '\xca',
+    'Euml' : '\xcb',
+    'Igrave' : '\xcc',
+    'Iacute' : '\xcd',
+    'Icirc' : '\xce',
+    'Iuml' : '\xcf',
+    'ETH' : '\xd0',
+    'Ntilde' : '\xd1',
+    'Ograve' : '\xd2',
+    'Oacute' : '\xd3',
+    'Ocirc' : '\xd4',
+    'Otilde' : '\xd5',
+    'Ouml' : '\xd6',
+    'times' : '\xd7',
+    'Oslash' : '\xd8',
+    'Ugrave' : '\xd9',
+    'Uacute' : '\xda',
+    'Ucirc' : '\xdb',
+    'Uuml' : '\xdc',
+    'Yacute' : '\xdd',
+    'THORN' : '\xde',
+    'szlig' : '\xdf',
+    'agrave' : '\xe0',
+    'aacute' : '\xe1',
+    'acirc' : '\xe2',
+    'atilde' : '\xe3',
+    'auml' : '\xe4',
+    'aring' : '\xe5',
+    'aelig' : '\xe6',
+    'ccedil' : '\xe7',
+    'egrave' : '\xe8',
+    'eacute' : '\xe9',
+    'ecirc' : '\xea',
+    'euml' : '\xeb',
+    'igrave' : '\xec',
+    'iacute' : '\xed',
+    'icirc' : '\xee',
+    'iuml' : '\xef',
+    'eth' : '\xf0',
+    'ntilde' : '\xf1',
+    'ograve' : '\xf2',
+    'oacute' : '\xf3',
+    'ocirc' : '\xf4',
+    'otilde' : '\xf5',
+    'ouml' : '\xf6',
+    'divide' : '\xf7',
+    'oslash' : '\xf8',
+    'ugrave' : '\xf9',
+    'uacute' : '\xfa',
+    'ucirc' : '\xfb',
+    'uuml' : '\xfc',
+    'yacute' : '\xfd',
+    'thorn' : '\xfe',
+    'yuml' : '\xff',
     }
 
 
@@ -1353,14 +1358,14 @@ class Feed_Parser(xmllib.XMLParser):
 
         if tag[-8:] == ' channel':
             log_message('unknown namespace for', tag.encode('iso8859-1', 'replace'))
-	elif tag[-5:] == ' item':
+        elif tag[-5:] == ' item':
             log_message('unknown namespace for', tag.encode('iso8859-1', 'replace'))
         elif self._state & 0xfc:
             if tag[-6:] == ' title':
                 log_message('unknown namespace for', tag.encode('iso8859-1', 'replace'))
-	    elif tag[-5:] == ' link':
+            elif tag[-5:] == ' link':
                 log_message('unknown namespace for', tag.encode('iso8859-1', 'replace'))
-	    elif tag[-12:] == ' description':
+            elif tag[-12:] == ' description':
                 log_message('unknown namespace for', tag.encode('iso8859-1', 'replace'))
 
     def unknown_endtag(self, tag):
@@ -1428,7 +1433,7 @@ class Feed_Parser(xmllib.XMLParser):
 
     def unknown_entityref(self, entity):
         try:
-            self._append_cdata(ENTITIES[entity])
+            self._append_cdata(ENTITIES[entity].decode('iso8859-1'))
         except KeyError:
             log_message('ignoring unknown entity ref', entity.encode('iso8859-1', 'replace'))
 
@@ -1460,7 +1465,7 @@ class RSS_Resource:
 
 
     def __init__(self, url, res_db=None):
-        self._lock = thread.allocate_lock()
+        self._lock = threading.Lock()
         self._url = url
         self._url_protocol, self._url_host, self._url_path = split_url(url)
 
@@ -1749,7 +1754,7 @@ class RSS_Resource:
                     bytes_received = 0
                     bytes_processed = 0
                     xml_started = 0
-                    file_hash = md5.new()
+                    file_hash = hashlib.md5()
 
                     l = response.read(4096)
                     while l:
@@ -2138,13 +2143,13 @@ if __name__ == '__main__':
 
         new_items, next_item_id, redirect_resource, redirect_seq, redirects = resource.update(db)
         channel_info = resource.channel_info()
-        print channel_info.title.encode('iso8859-1', 'replace'), channel_info.link.encode('iso8859-1', 'replace'), channel_info.descr.encode('iso8859-1', 'replace')
+        print('%s %s %s' % (channel_info.title.encode('iso8859-1', 'replace'), channel_info.link.encode('iso8859-1', 'replace'), channel_info.descr.encode('iso8859-1', 'replace')))
         error_info = resource.error_info()
         if error_info:
-            print 'error info', resource.error_info()
+            print('error info %s' % (error_info))
 
         if len(new_items) > 0:
-            print 'new items', map(lambda x: (x.title.encode('iso8859-1', 'replace'), x.link.encode('iso8859-1', 'replace')), new_items), next_item_id
+            print('new items %s %d' % (', '.join(map(lambda x: (x.title.encode('iso8859-1', 'replace'), x.link.encode('iso8859-1', 'replace')), new_items)), next_item_id))
 
     db.close()
     del db
