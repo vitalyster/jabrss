@@ -1718,11 +1718,12 @@ class JabberSessionEventHandler:
 
             if not not_stored and (len(items) > user.get_store_messages()):
                 body.append('%d headlines suppressed (from %s)\n' % (len(items) - user.get_store_messages(), channel_info.title))
+                l += len(body[-1])
                 items = items[-user.get_store_messages():]
 
-            if body != '':
+            if body:
                 body.append('\n')
-                l += len(body[-1])
+                l += 1
 
             for item in items:
                 try:
