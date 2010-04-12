@@ -1738,6 +1738,7 @@ class JabberSessionEventHandler:
                     body.append('\n')
 
                     if l >= MAX_MESSAGE_SIZE:
+                        l = len(body[-1]) + 1
                         body = []
                         msgs.append(body)
                 except ValueError:
