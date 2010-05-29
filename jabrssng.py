@@ -919,8 +919,9 @@ dummy_user = DummyJabberUser()
 class JabRSSHandler(object):
     implements(IMessageHandlersProvider, IPresenceHandlersProvider)
 
-    def __init__(self, client):
+    def __init__(self, client, jid):
         self._client = client
+        self.jid = jid
         self._update_queue = []
         self._update_queue_cond = threading.Condition()
         RSS_Resource.schedule_update = self.schedule_update
@@ -928,6 +929,8 @@ class JabRSSHandler(object):
         self._connected = 0
         self._shutdown = 0
 
+    def get_stream(self):
+        return self._client.get_stream()
 
     def get_message_handlers(self):
         return [
@@ -1430,6 +1433,7 @@ class JabRSSHandler(object):
                             break
                     finally:
                         resource.unlock()
+            return True
 
         elif typ == 'unavailable':
             presence = -1
@@ -1441,6 +1445,8 @@ class JabRSSHandler(object):
                     storage.evict_user(user)
             except KeyError:
                 pass
+
+            return True
 
     def presence_control(self, stanza):
         """Handle subscription control <presence/> stanzas -- acknowledge
@@ -1532,22 +1538,51 @@ class JabRSSHandler(object):
                 except ValueError:
                     print 'trying to unpack tuple of wrong size', repr(item)
 
-            # TODO
-            #if message_type == 0:
-            #    mt = jabIConstMessage.mtNormal
-            #else:
-            #    mt = jabIConstMessage.mtChat
-
+            mt = ('normal', 'chat')[message_type != 0]
             for body in msgs:
                 if body:
                     msg = Message(to_jid = JID(user.jid()),
-                                  subject = channel_info.title,
+                                  from_jid = self.jid,
+                                  stanza_type = mt,
+                                  subject = subject_text,
                                   body = ''.join(body))
                     stream.send(msg)
 
         elif message_type == 1:         # headline
-            # TODO
-            pass
+            if not not_stored and (len(items) > user.get_store_messages()):
+                msg = Message(to_jid = JID(user.jid()),
+                              from_jid = self.jid,
+                              stanza_type = 'headline',
+                              subject = subject_text,
+                              body = '%d headlines suppressed' % (len(items) - user.get_store_messages(),))
+                oob_ext = msg.xmlnode.newChild(None, 'x', None)
+                x_oob_ns = oob_ext.newNs('jabber:x:oob', None)
+                oob_ext.setNs(x_oob_ns)
+                oob_ext.newChild(None, 'url', channel_info.link)
+                oob_ext.newChild(None, 'desc', channel_info.descr)
+                stream.send(msg)
+
+                items = items[-user.get_store_messages():]
+
+            for item in items:
+                title, link = (item.title, item.link)
+
+                if item.descr_plain:
+                    description = item.descr_plain
+                else:
+                    description = title
+
+                msg = Message(to_jid = JID(user.jid()),
+                              from_jid = self.jid,
+                              stanza_type = 'headline',
+                              subject = subject_text,
+                              body = description[:user.get_size_limit()])
+                oob_ext = msg.xmlnode.newChild(None, 'x', None)
+                x_oob_ns = oob_ext.newNs('jabber:x:oob', None)
+                oob_ext.setNs(x_oob_ns)
+                oob_ext.newChild(None, 'url', link)
+                oob_ext.newChild(None, 'desc', title)
+                stream.send(msg)
 
 
     def schedule_update(self, resource):
@@ -1561,6 +1596,212 @@ class JabRSSHandler(object):
 
         self._update_queue_cond.release()
 
+    def run(self):
+        db, res_db = None, None
+
+        try:
+            time.sleep(20)
+            print 'starting RSS/RDF updater'
+            db = get_db()
+            res_db = RSS_Resource_db()
+            storage._redirect_db = db
+
+            self._update_queue_cond.acquire()
+            while not self._shutdown:
+                if self._update_queue:
+                    timeout = self._update_queue[0][0] - int(time.time())
+
+                    if timeout > 3:
+                        if timeout > 300:
+                            print 'updater waiting for %d seconds' % (timeout,)
+                        self._update_queue_cond.wait(timeout)
+                    else:
+                        resource = self._update_queue[0][1]
+                        del self._update_queue[0]
+
+                        self._update_queue_cond.release()
+                        self._update_resource(resource, db, res_db)
+                        self._update_queue_cond.acquire()
+                else:
+                    print 'updater queue empty...'
+                    self._update_queue_cond.wait()
+
+            self._update_queue_cond.release()
+        except:
+            print 'updater thread caught exception...'
+            traceback.print_exc(file=sys.stdout)
+            sys.exit(1)
+
+        print 'updater shutting down...'
+        del db
+        del storage._redirect_db
+        del res_db
+
+        if self._shutdown:
+            self._shutdown += 1
+
+
+    def _update_resource(self, resource, db, res_db=None):
+        redirect_url, redirect_seq = resource.redirect_info(res_db)
+        if redirect_url != None:
+            return
+
+        cursor = None
+        users_unlocker = None
+        redirect_resource = None
+        redirect_unlock = False
+        redirects = []
+
+        resource.lock(); need_unlock = True
+        try:
+            cursor = Cursor(db)
+            uids = storage.get_resource_uids(resource, cursor)
+            cursor = None
+
+            users_unlocker = storage.users_lock()
+            used = False
+            for uid in uids:
+                try:
+                    user = storage.get_user_by_id(uid)
+                    used = True
+                except KeyError:
+                    pass
+
+            if not used:
+                storage.evict_resource(resource)
+
+            users_unlocker = None
+
+            if used:
+                resource.unlock(); need_unlock = False
+                try:
+                    print time.asctime(), 'updating', resource.url()
+                    new_items, next_item_id, redirect_resource, redirect_seq, redirects = resource.update(res_db, redirect_cb = storage._redirect_cb)
+
+                    if len(new_items) > 0:
+                        need_unlock = True
+                    elif redirect_resource != None:
+                        resource.lock(); need_unlock = True
+
+                    if redirect_resource != None:
+                        redirect_resource.lock(); redirect_unlock = True
+
+                    if len(new_items) > 0 or redirect_resource != None:
+                        deliver_users = []
+                        cursor = Cursor(db)
+                        uids = storage.get_resource_uids(resource, cursor)
+                        cursor.begin()
+                        for uid in uids:
+                            try:
+                                user = storage.get_user_by_id(uid)
+
+                                if redirect_resource != None:
+                                    try:
+                                        user.add_resource(redirect_resource,
+                                                          redirect_seq,
+                                                          cursor)
+                                    except ValueError:
+                                        pass
+                                    try:
+                                        dummy_user.remove_resource(redirect_resource, cursor)
+                                    except ValueError:
+                                        pass
+
+
+                                if len(new_items) and user.get_delivery_state():
+                                    if redirect_resource == None:
+                                        user.update_headline(resource,
+                                                             next_item_id,
+                                                             new_items, cursor)
+                                    else:
+                                        try:
+                                            user.remove_resource(resource,
+                                                                 cursor)
+                                        except ValueError:
+                                            pass
+
+                                    deliver_users.append(user)
+
+                                elif len(new_items) == 0:
+                                    try:
+                                        user.remove_resource(resource, cursor)
+                                    except ValueError:
+                                        pass
+
+                            except KeyError:
+                                # just means that the user is no longer online
+                                pass
+
+                        # we need to unlock the resource here to
+                        # prevent deadlock (the main thread, which is
+                        # needed for sending, might be blocked waiting
+                        # to acquire resource)
+                        cursor = None
+                        if need_unlock:
+                            resource.unlock(); need_unlock = False
+
+                        if redirect_unlock:
+                            redirect_resource.unlock(); redirect_unlock = False
+
+                        for user in deliver_users:
+                            self._send_headlines(self.get_stream(), user,
+                                                 resource, new_items, True)
+                except:
+                    print 'exception caught updating', resource.url()
+                    traceback.print_exc(file=sys.stdout)
+
+                if need_unlock:
+                    resource.unlock(); need_unlock = False
+                if redirect_unlock:
+                    redirect_resource.unlock(); redirect_unlock = False
+                if redirect_resource == None:
+                    self.schedule_update(resource)
+        finally:
+	    del cursor
+            del users_unlocker
+            if need_unlock:
+                resource.unlock(); need_unlock = False
+
+        for resource, new_items, next_item_id in redirects:
+            deliver_users = []
+
+            # remember to always lock the resource first
+            resource.lock(); need_unlock = True
+            cursor = Cursor(db)
+            cursor.begin()
+            try:
+                print 'processing updated resource', resource.url()
+                try:
+                    dummy_user.remove_resource(resource, cursor)
+                except ValueError:
+                    pass
+
+                uids = storage.get_resource_uids(resource, cursor)
+                for uid in uids:
+                    try:
+                        user = storage.get_user_by_id(uid)
+
+                        if user.get_delivery_state():
+                            headline_id = user.headline_id(resource, cursor)
+                            if headline_id < next_item_id:
+                                user.update_headline(resource,
+                                                     next_item_id,
+                                                     new_items, cursor)
+
+                                deliver_users.append(user)
+                    except KeyError:
+                        # just means that the user is no longer online
+                        pass
+
+            finally:
+                del cursor
+                if need_unlock:
+                    resource.unlock(); need_unlock = False
+
+            for user in deliver_users:
+                self._send_headlines(self.get_stream(), user,
+                                     resource, new_items, True)
+
 
 class Client(JabberClient):
     def __init__(self, jid, password, host=None):
@@ -1572,10 +1813,11 @@ class Client(JabberClient):
                               disco_name='JabRSS', disco_type='bot',
                               auth_methods=['sasl:PLAIN', 'plain'])
 
+        session = JabRSSHandler(self, jid)
+        thread.start_new_thread(session.run, ())
+
         # add the separate components
-        self.interface_providers = [
-            JabRSSHandler(self),
-            ]
+        self.interface_providers = [ session, ]
 
     def stream_state_changed(self, state, arg):
         print '*** State changed: %s %r ***' % (state, arg)
@@ -1610,7 +1852,8 @@ sys.stderr = codecs.getwriter(encoding)(sys.stderr, errors='replace')
 
 logger = logging.getLogger()
 logger.addHandler(logging.StreamHandler())
-logger.setLevel(logging.INFO) # change to DEBUG for higher verbosity
+logger.setLevel(logging.DEBUG)
+#logger.setLevel(logging.INFO)
 
 print u'creating client...'
 c = Client(JID(JABBER_USER + '@' + JABBER_SERVER), JABBER_PASSWORD, JABBER_HOST)
