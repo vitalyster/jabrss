@@ -17,9 +17,9 @@
 # USA
 
 import bisect, codecs, getopt, locale, logging, os, sqlite3, string, sys
-import thread, threading, time, traceback
+import thread, threading, time, traceback, types
 
-from pyxmpp.all import JID, Iq, Presence, Message, StreamError
+from pyxmpp.all import JID, Message, Presence, RosterItem, StreamError
 from pyxmpp.jabber.client import JabberClient
 from pyxmpp.interface import implements
 from pyxmpp.interfaces import *
@@ -75,8 +75,6 @@ JABBER_SERVER = None
 JABBER_HOST = None
 JABBER_USER = None
 JABBER_PASSWORD = None
-MIGRATE_FROM = None
-MIGRATE_TO = None
 MAX_MESSAGE_SIZE = 20000
 
 
@@ -98,10 +96,6 @@ for optname, optval in opts:
         JABBER_SERVER = optval
     elif optname == '-u' or optname == '--username':
         JABBER_USER = optval
-    elif optname == '--migrate-from':
-        MIGRATE_FROM = optval.lower()
-    elif optname == '--migrate-to':
-        MIGRATE_TO = optval
 
 if JABBER_SERVER == None:
     JABBER_SERVER = raw_input('Jabber server: ')
@@ -926,7 +920,6 @@ class JabRSSHandler(object):
         self._update_queue_cond = threading.Condition()
         RSS_Resource.schedule_update = self.schedule_update
 
-        self._connected = 0
         self._shutdown = 0
 
     def get_stream(self):
@@ -1322,6 +1315,31 @@ class JabRSSHandler(object):
             return True
 
 
+    def _remove_user(self, jid):
+        iq = RosterItem(JID(jid), 'remove').make_roster_push()
+        self.get_stream().send(iq)
+
+    # delete all user information from database and evict user
+    def _delete_user(self, jid):
+        try:
+            user, jid_resource = storage.get_new_user(jid, None)
+            print 'deleting user\'s %s subscriptions: %s' % (jid, repr(user.resources()))
+            for res_id in user.resources():
+                resource = storage.get_resource_by_id(res_id)
+                resource.lock()
+                try:
+                    try:
+                        user.remove_resource(resource)
+                    except ValueError:
+                        pass
+                finally:
+                    resource.unlock()
+
+            storage.remove_user(user)
+        except KeyError:
+            traceback.print_exc(file=sys.stdout)
+
+
     def message(self, stanza):
         typ, sender, body = (stanza.get_type(), stanza.get_from(),
                              string.strip(stanza.get_body()))
@@ -1465,16 +1483,84 @@ class JabRSSHandler(object):
 
             reply.append(Message(to_jid = stanza.get_from(),
                                  from_jid = stanza.get_to(),
-                                 stanza_type = stanza.get_type(),
-                                 subject = stanza.get_subject(),
+                                 stanza_type = 'normal',
                                  body = msg_text))
-
+            reply.append(Presence(to_jid = stanza.get_from(),
+                                  from_jid = stanza.get_to(),
+                                  stanza_type = 'subscribe'))
         if typ == 'unsubscribed':
             self._delete_user(sender.as_unicode())
             self._remove_user(sender.as_unicode())
 
         reply.append(stanza.make_accept_response())
         return reply
+
+    def roster_updated(self, item):
+        if type(item) in (types.ListType, types.TupleType):
+            subscribers = {}
+            for elem in item:
+                jid = elem.jid.as_unicode()
+                if elem.subscription == 'both':
+                    subscribers[jid.lower()] = True
+                else:
+                    print 'subscription for user "%s" is "%s" (!= "both")' % (jid, elem.subscription)
+                    self._remove_user(jid)
+
+            cursor = Cursor(db)
+            result = cursor.execute('SELECT jid FROM user')
+            delete_users = []
+            for row in result:
+                username = row[0]
+                if not subscribers.has_key(username):
+                    delete_users.append(username)
+                else:
+                    subscribers[username] = False
+
+            del cursor
+
+            for username in delete_users:
+                print 'user "%s" in database, but not subscribed to the service' % (username,)
+                self._delete_user(username)
+
+
+            subscribers = filter(lambda x: x[1] == True,
+                                 subscribers.items())
+            subscribers = map(lambda x: x[0], subscribers)
+            week_nr = get_week_nr()
+
+            cursor = Cursor(db)
+
+            for username in subscribers:
+                try:
+                    cursor.execute('INSERT INTO user (jid, conf, store_messages, size_limit, since) VALUES (?, ?, ?, ?, ?)',
+                                   (username, 0, 16, None, week_nr))
+                except:
+                    pass
+
+            del cursor
+
+            cursor = Cursor(db)
+            result = cursor.execute('SELECT jid FROM user LEFT OUTER JOIN user_stat ON (user.uid=user_stat.uid) WHERE since < ? AND (start < ? OR start IS NULL)',
+                                    (week_nr - 3, week_nr - 32))
+            delete_users = []
+            for row in result:
+                delete_users.append(row[0])
+
+            del cursor
+
+            for username in delete_users:
+                print 'user "%s" hasn\'t used the service for more than 40 weeks' % (username,)
+                self._remove_user(username)
+                self._delete_user(username)
+        else:
+            if item.name:
+                name = item.name
+            else:
+                name = u''
+                print (u'%s "%s" subscription=%s groups=%s'
+                       % (unicode(item.jid), name, item.subscription,
+                          u','.join(item.groups)) )
+
 
     def _format_header(self, title, url, res_url, format):
         if url == '':
@@ -1813,33 +1899,20 @@ class Client(JabberClient):
                               disco_name='JabRSS', disco_type='bot',
                               auth_methods=['sasl:PLAIN', 'plain'])
 
-        session = JabRSSHandler(self, jid)
-        thread.start_new_thread(session.run, ())
+        self._session = JabRSSHandler(self, jid)
+        thread.start_new_thread(self._session.run, ())
 
         # add the separate components
-        self.interface_providers = [ session, ]
+        self.interface_providers = [ self._session, ]
 
     def stream_state_changed(self, state, arg):
         print '*** State changed: %s %r ***' % (state, arg)
 
-    def print_roster_item(self, item):
-        if item.name:
-            name = item.name
-        else:
-            name = u''
-        print (u'%s "%s" subscription=%s groups=%s'
-                % (unicode(item.jid), name, item.subscription,
-                    u','.join(item.groups)) )
-
     def roster_updated(self, item=None):
         if not item:
-            print u'My roster:'
-            for item in self.roster.get_items():
-                self.print_roster_item(item)
-            return
-
-        print u'Roster item updated:'
-        self.print_roster_item(item)
+            self._session.roster_updated(self.roster.get_items())
+        else:
+            self._session.roster_updated(item)
 
 
 locale.setlocale(locale.LC_CTYPE, '')
