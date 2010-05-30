@@ -16,8 +16,8 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
 # USA
 
-import bisect, codecs, getopt, locale, logging, os, sqlite3, string, sys
-import thread, threading, time, traceback, types
+import bisect, codecs, getopt, locale, logging, os, sqlite3, string
+import sys, thread, threading, time, traceback, types
 
 from pyxmpp.all import JID, Message, Presence, RosterItem, StreamError
 from pyxmpp.jabber.client import JabberClient
@@ -988,7 +988,7 @@ class JabRSSHandler(object):
                 format = 0
                 break
             else:
-                raise 'invalid format'
+                raise Exception('invalid format')
         return format
 
     def _process_set(self, stanza, user, argstr):
@@ -1019,7 +1019,7 @@ class JabRSSHandler(object):
                         elif s == 'none':
                             pass
                         else:
-                            raise 'unknown setting for "also_deliver"'
+                            raise Exception('unknown setting for "also_deliver"')
 
                     user.set_delivery_state(deliver_cfg)
                     reply_body = '"also_deliver" setting adjusted'
@@ -1556,10 +1556,10 @@ class JabRSSHandler(object):
             if item.name:
                 name = item.name
             else:
-                name = u''
-                print (u'%s "%s" subscription=%s groups=%s'
+                name = ''
+                print ('%s "%s" subscription=%s groups=%s'
                        % (unicode(item.jid), name, item.subscription,
-                          u','.join(item.groups)) )
+                          ','.join(item.groups)) )
 
 
     def _format_header(self, title, url, res_url, format):
@@ -1905,14 +1905,97 @@ class Client(JabberClient):
         # add the separate components
         self.interface_providers = [ self._session, ]
 
+    def get_session(self):
+        return self._session
+
     def stream_state_changed(self, state, arg):
-        print '*** State changed: %s %r ***' % (state, arg)
+        print 'State changed: %s %r' % (state, arg)
 
     def roster_updated(self, item=None):
         if not item:
             self._session.roster_updated(self.roster.get_items())
         else:
             self._session.roster_updated(item)
+
+
+def console_handler(clt):
+    db = get_db()
+
+    try:
+        while True:
+            s = raw_input()
+            s = ' '.join(map(string.strip, s.split()))
+
+            if s == '':
+                pass
+            elif s == 'debug locks':
+                # show all locked objects
+                print 'db_sync', db_sync.locked()
+                print 'storage._users_sync', storage._users_sync.locked()
+                print 'storage._resources_sync', storage._resources_sync.locked()
+
+                print 'RSS_Resource._db_sync', RSS_Resource._db_sync.locked()
+                for res in storage._resources.values():
+                    if res._lock.locked():
+                        print 'resource %s' % (res._url,)
+
+                print 'done dumping locked objects'
+            elif s == 'debug resources':
+                resources = storage._resources.keys()
+                resources.sort()
+                print repr(resources)
+            elif s == 'debug users':
+                users = storage._users.keys()
+                users.sort()
+                print repr(users)
+            elif s.startswith('dump user '):
+                try:
+                    user, resource = storage.get_user(s[10:].strip())
+
+                    print 'jid: %s, uid: %d' % (repr(user.jid()), user.uid())
+                    print 'resources: %s' % (repr(user._jid_resources.items()),)
+                    print 'presence: %d' % (user.presence(),)
+                    print 'delivery state: %d' % (user.get_delivery_state(),)
+                    print 'statistics: %s' % (repr(user.get_statistics()),)
+                except KeyError:
+                    print 'user not online'
+            elif s == 'statistics':
+                cursor = Cursor(db)
+
+                try:
+                    result = cursor.execute('SELECT count(uid) FROM user')
+
+                    total_users = 0
+                    for row in result:
+                        total_users = row[0]
+
+                    result = cursor.execute('SELECT count(rid) FROM (SELECT DISTINCT rid FROM user_resource)')
+
+                    total_resources = 0
+                    for row in result:
+                        total_resources = row[0]
+                finally:
+                    del cursor
+
+                print 'Users online/total: %d/%d' % (len(storage._users) / 2,
+                                                     total_users)
+                print 'RDF feeds used/total: %d/%d' % (len(storage._resources) / 2, total_resources)
+
+            elif s == 'shutdown':
+                break
+            else:
+                print 'Unknown command \'%s\'' % (s,)
+
+    except EOFError:
+        pass
+    except KeyboardInterrupt:
+        pass
+
+    # initiate a clean shutdown
+    print 'JabRSS shutting down...'
+    del db
+
+    clt.disconnect()
 
 
 locale.setlocale(locale.LC_CTYPE, '')
@@ -1928,21 +2011,19 @@ logger.addHandler(logging.StreamHandler())
 logger.setLevel(logging.DEBUG)
 #logger.setLevel(logging.INFO)
 
-print u'creating client...'
 c = Client(JID(JABBER_USER + '@' + JABBER_SERVER), JABBER_PASSWORD, JABBER_HOST)
+thread.start_new_thread(console_handler, (c,))
 
-print u'connecting...'
 c.connect()
 
-print u'looping...'
 try:
     # Component class provides basic "main loop" for the applitation
     # Though, most applications would need to have their own loop and call
     # component.stream.loop_iter() from it whenever an event on
     # component.stream.fileno() occurs.
-    c.loop(1)
+    c.loop(60)
 except KeyboardInterrupt:
-    print u'disconnecting...'
+    print 'disconnecting...'
     c.disconnect()
 
-print u'exiting...'
+print 'exiting...'
