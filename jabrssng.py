@@ -80,17 +80,17 @@ opts, args = getopt.getopt(sys.argv[1:], 'f:h:p:s:u:',
                             'server=', 'connect-host=', 'username='])
 
 for optname, optval in opts:
-    if optname == '-f' or optname == '--password-file':
+    if optname in ('-f', '--password-file'):
         fd = open(optval, 'r')
         JABBER_PASSWORD = string.strip(fd.readline())
         fd.close()
-    elif optname == '-c' or optname == '--connect-host':
+    elif optname in ('-c', '--connect-host'):
         JABBER_HOST = optval
-    elif optname == '-p' or optname == '--password':
+    elif optname in ('-p', '--password'):
         JABBER_PASSWORD = optval
-    elif optname == '-s' or optname == '--server':
+    elif optname in ('-s', '--server'):
         JABBER_SERVER = optval
-    elif optname == '-u' or optname == '--username':
+    elif optname in ('-u', '--username'):
         JABBER_USER = optval
 
 if JABBER_SERVER == None:
@@ -906,7 +906,7 @@ class JabRSSHandler(object):
         self._shutdown_lock = threading.Lock()
 
     def get_stream(self):
-        return self._client.get_stream()
+        return self._client.get_valid_stream()
 
     def get_message_handlers(self):
         return [
@@ -1300,7 +1300,9 @@ class JabRSSHandler(object):
 
     def _remove_user(self, jid):
         iq = RosterItem(JID(jid), 'remove').make_roster_push()
-        self.get_stream().send(iq)
+        stream = self.get_stream()
+        if stream != None:
+            stream.send(iq)
 
     # delete all user information from database and evict user
     def _delete_user(self, jid):
@@ -1381,7 +1383,7 @@ class JabRSSHandler(object):
                                      stanza.get_status(), stanza.get_show())
         print 'presence', sender.as_unicode(), typ, status, show
 
-        if typ == 'available' or typ == None:
+        if typ in (None, 'available'):
             try:
                 presence = [None, 'chat', 'away', 'xa', 'dnd'].index(show)
             except ValueError:
@@ -1571,7 +1573,7 @@ class JabRSSHandler(object):
 
         subject_text = self._format_header(channel_info.title, channel_info.link, resource.url(), subject_format)
 
-        if message_type == 0 or message_type == 2: # normal message or chat
+        if message_type in (0, 2): # normal message or chat
             body = []
             msgs, l = [body], 0
             header_text = self._format_header(channel_info.title, channel_info.link, resource.url(), header_format)
@@ -1765,6 +1767,7 @@ class JabRSSHandler(object):
 
                     if len(new_items) > 0 or redirect_resource != None:
                         deliver_users = []
+                        stream = self.get_stream()
                         cursor = Cursor(db)
                         uids = storage.get_resource_uids(resource, cursor)
                         cursor.begin()
@@ -1785,7 +1788,7 @@ class JabRSSHandler(object):
                                         pass
 
 
-                                if len(new_items) and user.get_delivery_state():
+                                if len(new_items) and user.get_delivery_state() and stream != None:
                                     if redirect_resource == None:
                                         user.update_headline(resource,
                                                              next_item_id,
@@ -1821,7 +1824,7 @@ class JabRSSHandler(object):
                             redirect_resource.unlock(); redirect_unlock = False
 
                         for user in deliver_users:
-                            self._send_headlines(self.get_stream(), user,
+                            self._send_headlines(stream, user,
                                                  resource, new_items, True)
                 except:
                     print 'exception caught updating', resource.url()
@@ -1839,6 +1842,7 @@ class JabRSSHandler(object):
             if need_unlock:
                 resource.unlock(); need_unlock = False
 
+        stream = self.get_stream()
         for resource, new_items, next_item_id in redirects:
             deliver_users = []
 
@@ -1858,7 +1862,7 @@ class JabRSSHandler(object):
                     try:
                         user = storage.get_user_by_id(uid)
 
-                        if user.get_delivery_state():
+                        if user.get_delivery_state() and stream != None:
                             headline_id = user.headline_id(resource, cursor)
                             if headline_id < next_item_id:
                                 user.update_headline(resource,
@@ -1876,7 +1880,7 @@ class JabRSSHandler(object):
                     resource.unlock(); need_unlock = False
 
             for user in deliver_users:
-                self._send_headlines(self.get_stream(), user,
+                self._send_headlines(stream, user,
                                      resource, new_items, True)
 
 
@@ -1891,6 +1895,7 @@ class Client(JabberClient):
                               auth_methods=['sasl:PLAIN', 'plain'])
 
         self._disconnect = False
+        self._state = ''
         self._session = JabRSSHandler(self, jid)
         thread.start_new_thread(self._session.run, ())
 
@@ -1899,6 +1904,12 @@ class Client(JabberClient):
 
     def get_session(self):
         return self._session
+
+    def get_valid_stream(self):
+        if self._state in ('authorized',):
+            return self.get_stream()
+        else:
+            return None
 
     def disconnect(self):
         self._disconnect = True
@@ -1911,6 +1922,7 @@ class Client(JabberClient):
         self._session.shutdown()
 
     def stream_state_changed(self, state, arg):
+        self._state = state
         print 'State changed: %s %r' % (state, arg)
 
     def roster_updated(self, item=None):
@@ -1989,8 +2001,6 @@ def console_handler(clt):
                 print 'Unknown command \'%s\'' % (s,)
 
     except EOFError:
-        pass
-    except KeyboardInterrupt:
         pass
 
     # initiate a clean shutdown
