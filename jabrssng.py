@@ -415,10 +415,12 @@ class DataStorage:
             del self._users[user.uid()]
         except KeyError:
             pass
+        del users_unlocker
 
     def evict_all_users(self):
         users_unlocker = self.users_lock()
         self._users = {}
+        del users_unlocker
 
 
     def remove_user(self, user):
@@ -1546,6 +1548,8 @@ class JabRSSHandler(object):
                        % (unicode(item.jid), name, item.subscription,
                           ','.join(item.groups)) )
 
+    def disconnected(self):
+        storage.evict_all_users()
 
     def _format_header(self, title, url, res_url, format):
         if url == '':
@@ -1924,6 +1928,8 @@ class Client(JabberClient):
     def stream_state_changed(self, state, arg):
         self._state = state
         print 'State changed: %s %r' % (state, arg)
+        if state == 'disconnected':
+            self._session.disconnected()
 
     def roster_updated(self, item=None):
         if not item:
