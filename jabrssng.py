@@ -19,8 +19,9 @@
 import bisect, codecs, getopt, locale, logging, os, socket, sqlite3, string
 import sys, thread, threading, time, traceback, types
 
-from pyxmpp.all import JID, Message, Presence, RosterItem, StreamError
+from pyxmpp.all import JID, Message, Presence, RosterItem
 from pyxmpp.jabber.client import JabberClient
+from pyxmpp.jabber.clientstream import LegacyClientStream
 from pyxmpp.interface import implements
 from pyxmpp.interfaces import *
 
@@ -1888,6 +1889,28 @@ class JabRSSHandler(object):
                                      resource, new_items, True)
 
 
+# temporary bug fix for PyXMPP bug #37
+class MyLegacyClientStream(LegacyClientStream):
+    def __init__(self, jid, password = None, server = None, port = 5222,
+                 auth_methods = ("sasl:DIGEST-MD5", "digest"),
+                 tls_settings = None, keepalive = 0, owner = None):
+        LegacyClientStream.__init__(self, jid, password, server, port,
+                                    auth_methods, tls_settings, keepalive,
+                                    owner)
+
+    def _write_raw(self, data):
+        logging.getLogger("pyxmpp.Stream.out").debug("OUT: %r",data)
+        try:
+            off = 0
+            while self.socket:
+                sent = self.socket.send(data[off:])
+                off += sent
+                if off >= len(data):
+                    break
+        except (IOError,OSError,socket.error),e:
+            raise FatalStreamError("IO Error: "+str(e))
+
+
 class Client(JabberClient):
     def __init__(self, jid, password, host=None):
         # if bare JID is provided add a resource -- it is required
@@ -1897,6 +1920,7 @@ class Client(JabberClient):
         JabberClient.__init__(self, jid, password, host,
                               disco_name='JabRSS', disco_type='bot',
                               auth_methods=['sasl:PLAIN', 'plain'])
+        self.stream_class = MyLegacyClientStream
 
         self._disconnect = False
         self._state = ''
