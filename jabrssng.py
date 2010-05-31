@@ -2010,8 +2010,8 @@ sys.stderr = codecs.getwriter(encoding)(sys.stderr, errors='replace')
 
 logger = logging.getLogger()
 logger.addHandler(logging.StreamHandler())
-logger.setLevel(logging.DEBUG)
-#logger.setLevel(logging.INFO)
+#logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 c = Client(JID(JABBER_USER + '@' + JABBER_SERVER), JABBER_PASSWORD, JABBER_HOST)
 thread.start_new_thread(console_handler, (c,))
