@@ -16,7 +16,7 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
 # USA
 
-import bisect, codecs, getopt, locale, logging, os, sqlite3, string
+import bisect, codecs, getopt, locale, logging, os, socket, sqlite3, string
 import sys, thread, threading, time, traceback, types
 
 from pyxmpp.all import JID, Message, Presence, RosterItem, StreamError
@@ -63,12 +63,9 @@ configuration
 show statistics
 show usage
 
-Please refer to the JabRSS command reference at http://cmeerw.org/dev/book/view/30 for more information.
+Please refer to the JabRSS command reference at http://dev.cmeerw.org/book/view/30 for more information.
 
 And of course, if you like this service you might also consider a donation, see http://cmeerw.org/donate.html'''
-
-TEXT_MIGRATE = '''\
-In order to improve the JabRSS service it has been moved to a new Jabber server. Your settings have just been migrated to the new JabRSS instance. Please see http://cmeerw.org/dev/node/view/122 for all details.'''
 
 
 JABBER_SERVER = None
@@ -80,8 +77,7 @@ MAX_MESSAGE_SIZE = 20000
 
 opts, args = getopt.getopt(sys.argv[1:], 'f:h:p:s:u:',
                            ['password-file=', 'password=',
-                            'server=', 'connect-host=', 'username=',
-                            'migrate-from=', 'migrate-to='])
+                            'server=', 'connect-host=', 'username='])
 
 for optname, optval in opts:
     if optname == '-f' or optname == '--password-file':
@@ -442,8 +438,6 @@ class DataStorage:
 
 storage = DataStorage()
 
-last_migrated = 0
-
 
 def strip_resource(jid):
     pos = string.find(jid, '/')
@@ -599,18 +593,6 @@ class JabberUser:
 
     def get_header_format(self):
         return (self._configuration & 0x0300) >> 8
-
-
-    def set_migrated(self, migrated):
-        if migrated:
-            migrated_val = 0x20
-        else:
-            migrated_val = 0
-        self._configuration = (self._configuration & ~0x0020) | migrated_val
-        self._update_configuration()
-
-    def get_migrated(self):
-        return (self._configuration & 0x0020) != 0
 
 
     def set_size_limit(self, size_limit):
@@ -921,6 +903,7 @@ class JabRSSHandler(object):
         RSS_Resource.schedule_update = self.schedule_update
 
         self._shutdown = 0
+        self._shutdown_lock = threading.Lock()
 
     def get_stream(self):
         return self._client.get_stream()
@@ -1684,6 +1667,7 @@ class JabRSSHandler(object):
 
     def run(self):
         db, res_db = None, None
+        self._shutdown_lock.acquire()
 
         try:
             time.sleep(20)
@@ -1723,8 +1707,15 @@ class JabRSSHandler(object):
         del storage._redirect_db
         del res_db
 
-        if self._shutdown:
-            self._shutdown += 1
+        self._shutdown_lock.release()
+
+    def shutdown(self):
+        self._shutdown = True
+
+        self._update_queue_cond.acquire()
+        self._update_queue_cond.notifyAll()
+        self._update_queue_cond.release()
+        self._shutdown_lock.acquire()
 
 
     def _update_resource(self, resource, db, res_db=None):
@@ -1899,6 +1890,7 @@ class Client(JabberClient):
                               disco_name='JabRSS', disco_type='bot',
                               auth_methods=['sasl:PLAIN', 'plain'])
 
+        self._disconnect = False
         self._session = JabRSSHandler(self, jid)
         thread.start_new_thread(self._session.run, ())
 
@@ -1907,6 +1899,16 @@ class Client(JabberClient):
 
     def get_session(self):
         return self._session
+
+    def disconnect(self):
+        self._disconnect = True
+        JabberClient.disconnect(self)
+
+    def disconnected(self):
+        return self._disconnect
+
+    def shutdown(self):
+        self._session.shutdown()
 
     def stream_state_changed(self, state, arg):
         print 'State changed: %s %r' % (state, arg)
@@ -2014,16 +2016,30 @@ logger.setLevel(logging.DEBUG)
 c = Client(JID(JABBER_USER + '@' + JABBER_SERVER), JABBER_PASSWORD, JABBER_HOST)
 thread.start_new_thread(console_handler, (c,))
 
-c.connect()
 
-try:
-    # Component class provides basic "main loop" for the applitation
-    # Though, most applications would need to have their own loop and call
-    # component.stream.loop_iter() from it whenever an event on
-    # component.stream.fileno() occurs.
-    c.loop(60)
-except KeyboardInterrupt:
-    print 'disconnecting...'
-    c.disconnect()
+last_attempt = 0
+while not c.disconnected():
+    if last_attempt != 0:
+        delay = 15
+        if int(time.time()) - last_attempt < 30:
+            delay += 45
+        print 'waiting for next connection attempt in', delay, 'seconds'
+        time.sleep(delay)
+
+    last_attempt = int(time.time())
+    try:
+        c.connect()
+    except socket.error:
+        continue
+
+    last_attempt = int(time.time())
+    try:
+        c.loop(60)
+    except KeyboardInterrupt:
+        print 'disconnecting...'
+        c.disconnect()
+        break
+
 
 print 'exiting...'
+c.shutdown()
