@@ -22,6 +22,7 @@ import sys, thread, threading, time, traceback, types
 from pyxmpp.all import JID, Message, Presence, RosterItem
 from pyxmpp.jabber.client import JabberClient
 from pyxmpp.jabber.clientstream import LegacyClientStream
+from pyxmpp.exceptions import *
 from pyxmpp.interface import implements
 from pyxmpp.interfaces import *
 
@@ -2075,6 +2076,14 @@ while not c.disconnected():
     last_attempt = int(time.time())
     try:
         c.loop(60)
+    except LegacyAuthenticationError:
+        print 'legacay authenticaton error'
+        c.disconnect()
+        break
+    except StreamAuthenticationError:
+        print 'stream authenticaton error'
+        c.disconnect()
+        break
     except KeyboardInterrupt:
         print 'disconnecting...'
         c.disconnect()
