@@ -22,6 +22,7 @@ import sys, thread, threading, time, traceback, types
 from pyxmpp.all import JID, Message, Presence, RosterItem
 from pyxmpp.jabber.client import JabberClient
 from pyxmpp.jabber.clientstream import LegacyClientStream
+from pyxmpp.utils import to_utf8
 from pyxmpp.exceptions import *
 from pyxmpp.interface import implements
 from pyxmpp.interfaces import *
@@ -919,8 +920,9 @@ class JabRSSHandler(object):
 
     def get_presence_handlers(self):
         return [
-            (None, self.presence),
-            ('unavailable', self.presence),
+            (None, self.presence_available),
+            ('unavailable', self.presence_unavailable),
+            ('error', self.presence_unavailable),
             ('subscribe', self.presence_control),
             ('subscribed', self.presence_control),
             ('unsubscribe', self.presence_control),
@@ -1162,7 +1164,7 @@ class JabRSSHandler(object):
 
     def _process_subscribe(self, stanza, user, argstr):
         args = string.split(argstr)
-        reply_body = None
+        reply, reply_body = [], None
 
         for arg in args:
             try:
@@ -1195,18 +1197,20 @@ class JabRSSHandler(object):
                 reply_body = 'For some reason you couldn\'t be subscribed to %s' % (url,)
 
             if reply_body:
-                reply = Message(to_jid = stanza.get_from(),
-                                from_jid = stanza.get_to(),
-                                stanza_type = stanza.get_type(),
-                                subject = stanza.get_subject(),
-                                body = reply_body)
-                return reply
+                reply.append(Message(to_jid = stanza.get_from(),
+                                     from_jid = stanza.get_to(),
+                                     stanza_type = stanza.get_type(),
+                                     subject = stanza.get_subject(),
+                                     body = reply_body))
 
+        if reply:
+            return reply
+        else:
             return True
 
     def _process_unsubscribe(self, stanza, user, argstr):
         args = string.split(argstr)
-        reply_body = None
+        reply, reply_body = [], None
 
         for arg in args:
             url = arg.encode('ascii')
@@ -1227,18 +1231,20 @@ class JabRSSHandler(object):
                 reply_body = 'No need to unsubscribe, you weren\'t subscribed to %s anyway' % (url,)
 
             if reply_body:
-                reply = Message(to_jid = stanza.get_from(),
-                                from_jid = stanza.get_to(),
-                                stanza_type = stanza.get_type(),
-                                subject = stanza.get_subject(),
-                                body = reply_body)
-                return reply
+                reply.append(Message(to_jid = stanza.get_from(),
+                                     from_jid = stanza.get_to(),
+                                     stanza_type = stanza.get_type(),
+                                     subject = stanza.get_subject(),
+                                     body = reply_body))
 
+        if reply:
+            return reply
+        else:
             return True
 
     def _process_info(self, stanza, user, argstr):
         args = string.split(argstr)
-        reply_body = None
+        reply, reply_body = [], None
 
         for arg in args:
             url = arg.encode('ascii')
@@ -1292,13 +1298,15 @@ class JabRSSHandler(object):
                 reply_body = 'No information available about %s' % (url,)
 
             if reply_body:
-                reply = Message(to_jid = stanza.get_from(),
-                                from_jid = stanza.get_to(),
-                                stanza_type = stanza.get_type(),
-                                subject = stanza.get_subject(),
-                                body = reply_body)
-                return reply
+                reply.append(Message(to_jid = stanza.get_from(),
+                                     from_jid = stanza.get_to(),
+                                     stanza_type = stanza.get_type(),
+                                     subject = stanza.get_subject(),
+                                     body = reply_body))
 
+        if reply:
+            return reply
+        else:
             return True
 
 
@@ -1380,85 +1388,81 @@ class JabRSSHandler(object):
 
         return True
 
-    def presence(self, stanza):
-        """Handle 'available' (without 'type') and 'unavailable' <presence/>."""
-
+    def presence_available(self, stanza):
         sender, typ, status, show = (stanza.get_from(), stanza.get_type(),
                                      stanza.get_status(), stanza.get_show())
-        print 'presence', sender.as_unicode(), typ, status, show
+        print 'presence', sender.as_unicode(), typ, show
 
-        if typ in (None, 'available'):
-            try:
-                presence = [None, 'chat', 'away', 'xa', 'dnd'].index(show)
-            except ValueError:
-                return
+        try:
+            presence = [None, 'chat', 'away', 'xa', 'dnd'].index(show)
+        except ValueError:
+            return
 
-            user, jid_resource = storage.get_new_user(sender.as_unicode(),
-                                                      presence)
-            if user.get_delivery_state(presence):
-                subs = None
+        user, jid_resource = storage.get_new_user(sender.as_unicode(),
+                                                  presence)
+        if user.get_delivery_state(presence):
+            subs = None
 
-                for res_id in user.resources()[:]:
-                    resource = storage.get_resource_by_id(res_id)
-                    if subs != None:
-                        subs.append(resource.url())
+            for res_id in user.resources()[:]:
+                resource = storage.get_resource_by_id(res_id)
+                if subs != None:
+                    subs.append(resource.url())
 
-                    try:
-                        resource.lock()
+                try:
+                    resource.lock()
 
-                        while True:
-                            headline_id = user.headline_id(resource)
-                            old_id = headline_id
+                    while True:
+                        headline_id = user.headline_id(resource)
+                        old_id = headline_id
 
-                            new_items, headline_id = resource.get_headlines(headline_id, db=main_res_db)
-                            if new_items:
-                                self._send_headlines(self.get_stream(), user,
-                                                     resource, new_items)
+                        new_items, headline_id = resource.get_headlines(headline_id, db=main_res_db)
+                        if new_items:
+                            self._send_headlines(self.get_stream(), user,
+                                                 resource, new_items)
 
-                            redirect_url, redirect_seq = resource.redirect_info(main_res_db)
-                            if redirect_url != None:
-                                print 'processing redirect to', redirect_url
+                        redirect_url, redirect_seq = resource.redirect_info(main_res_db)
+                        if redirect_url != None:
+                            print 'processing redirect to', redirect_url
 
-                                try:
-                                    user.remove_resource(resource)
-                                except ValueError:
-                                    pass
-                                resource.unlock()
+                            try:
+                                user.remove_resource(resource)
+                            except ValueError:
+                                pass
+                            resource.unlock()
 
-                                resource = storage.get_resource(redirect_url, None,
-                                                                True, False)
-                                try:
-                                    user.add_resource(resource, redirect_seq)
-                                except ValueError:
-                                    pass
+                            resource = storage.get_resource(redirect_url, None,
+                                                            True, False)
+                            try:
+                                user.add_resource(resource, redirect_seq)
+                            except ValueError:
+                                pass
 
-                                continue
-                            elif new_items or headline_id != old_id:
-                                user.update_headline(resource, headline_id,
-                                                     new_items)
+                            continue
+                        elif new_items or headline_id != old_id:
+                            user.update_headline(resource, headline_id,
+                                                 new_items)
 
-                            break
-                    finally:
-                        resource.unlock()
-            return True
+                        break
+                finally:
+                    resource.unlock()
+        return True
 
-        elif typ == 'unavailable':
-            presence = -1
-            try:
-                user, jid_resource = storage.get_user(sender.as_unicode())
-                user.set_presence(jid_resource, presence)
-                if user.presence() < 0:
-                    print 'evicting user', user.jid()
-                    storage.evict_user(user)
-            except KeyError:
-                pass
+    def presence_unavailable(self, stanza):
+        sender, typ, status, show = (stanza.get_from(), stanza.get_type(),
+                                     stanza.get_status(), stanza.get_show())
+        print 'presence', sender.as_unicode(), typ, show
+        try:
+            user, jid_resource = storage.get_user(sender.as_unicode())
+            user.set_presence(jid_resource, -1)
+            if user.presence() < 0:
+                print 'evicting user', user.jid()
+                storage.evict_user(user)
+        except KeyError:
+            pass
 
-            return True
+        return True
 
     def presence_control(self, stanza):
-        """Handle subscription control <presence/> stanzas -- acknowledge
-        them."""
-
         reply = []
         sender, typ = stanza.get_from(), stanza.get_type()
         print 'presence_control', sender.as_unicode(), typ
@@ -1485,6 +1489,7 @@ class JabRSSHandler(object):
         return reply
 
     def roster_updated(self, item):
+        print 'roster updated', type(item)
         if type(item) in (types.ListType, types.TupleType):
             subscribers = {}
             for elem in item:
@@ -1635,8 +1640,8 @@ class JabRSSHandler(object):
                 oob_ext = msg.xmlnode.newChild(None, 'x', None)
                 x_oob_ns = oob_ext.newNs('jabber:x:oob', None)
                 oob_ext.setNs(x_oob_ns)
-                oob_ext.newChild(None, 'url', channel_info.link)
-                oob_ext.newChild(None, 'desc', channel_info.descr)
+                oob_ext.newChild(None, 'url', to_utf8(channel_info.link))
+                oob_ext.newChild(None, 'desc', to_utf8(channel_info.descr))
                 stream.send(msg)
 
                 items = items[-user.get_store_messages():]
@@ -1657,8 +1662,8 @@ class JabRSSHandler(object):
                 oob_ext = msg.xmlnode.newChild(None, 'x', None)
                 x_oob_ns = oob_ext.newNs('jabber:x:oob', None)
                 oob_ext.setNs(x_oob_ns)
-                oob_ext.newChild(None, 'url', link)
-                oob_ext.newChild(None, 'desc', title)
+                oob_ext.newChild(None, 'url', to_utf8(link))
+                oob_ext.newChild(None, 'desc', to_utf8(title))
                 stream.send(msg)
 
 
