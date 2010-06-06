@@ -1489,7 +1489,6 @@ class JabRSSHandler(object):
         return reply
 
     def roster_updated(self, item):
-        print 'roster updated', type(item)
         if type(item) in (types.ListType, types.TupleType):
             subscribers = {}
             for elem in item:
@@ -2063,7 +2062,7 @@ c = Client(JID(JABBER_USER + '@' + JABBER_SERVER), JABBER_PASSWORD, JABBER_HOST)
 thread.start_new_thread(console_handler, (c,))
 
 
-last_attempt = 0
+last_attempt, last_idled = 0, 0
 while not c.disconnected():
     if last_attempt != 0:
         delay = 15
@@ -2080,7 +2079,15 @@ while not c.disconnected():
 
     last_attempt = int(time.time())
     try:
-        c.loop(60)
+        while True:
+            stream = c.get_stream()
+            if stream:
+                act = stream.loop_iter(60)
+                if not act or (time.time() - last_idled > 60):
+                    last_idled = int(time.time())
+                    stream.idle()
+            else:
+                break
     except LegacyAuthenticationError:
         print 'legacay authenticaton error'
         c.disconnect()
