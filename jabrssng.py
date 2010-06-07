@@ -918,6 +918,7 @@ class JabRSSHandler(object):
 
     def get_message_handlers(self):
         return [
+            ('chat', self.message),
             ('normal', self.message),
             ]
 
@@ -1343,11 +1344,11 @@ class JabRSSHandler(object):
     def message(self, stanza):
         typ, sender, body = (stanza.get_type(), stanza.get_from(),
                              stanza.get_body())
+        if typ == None or body == None:
+            return
 
-        print 'message', typ, sender.as_unicode(), body
-        if body == None:
-            return True
         body = string.strip(body)
+        print 'message', typ, sender.as_unicode(), body
 
         if typ in ('normal', 'chat'):
             try:
@@ -2101,6 +2102,8 @@ while not c.disconnected():
         print 'stream authenticaton error'
         c.disconnect()
         break
+    except StreamError:
+        print 'stream error'
     except KeyboardInterrupt:
         print 'disconnecting...'
         c.disconnect()
