@@ -27,6 +27,9 @@ from pyxmpp.exceptions import *
 from pyxmpp.interface import implements
 from pyxmpp.interfaces import *
 
+import libxml2
+libxml2.debugMemory(1)
+
 import parserss
 from parserss import RSS_Resource, RSS_Resource_id2url, RSS_Resource_simplify
 from parserss import RSS_Resource_db, RSS_Resource_Cursor
@@ -1906,12 +1909,8 @@ class MyLegacyClientStream(LegacyClientStream):
     def _write_raw(self, data):
         logging.getLogger("pyxmpp.Stream.out").debug("OUT: %r",data)
         try:
-            off = 0
-            while self.socket:
-                sent = self.socket.send(data[off:])
-                off += sent
-                if off >= len(data):
-                    break
+            if self.socket:
+                self.socket.sendall(data)
         except (IOError,OSError,socket.error),e:
             raise FatalStreamError("IO Error: "+str(e))
 
@@ -1977,6 +1976,8 @@ def console_handler(clt):
 
             if s == '':
                 pass
+            elif s == 'debug memory':
+                print libxml2.debugMemory(1)
             elif s == 'debug locks':
                 # show all locked objects
                 print 'db_sync', db_sync.locked()
