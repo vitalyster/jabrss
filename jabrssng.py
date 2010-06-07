@@ -1342,9 +1342,13 @@ class JabRSSHandler(object):
 
     def message(self, stanza):
         typ, sender, body = (stanza.get_type(), stanza.get_from(),
-                             string.strip(stanza.get_body()))
+                             stanza.get_body())
 
         print 'message', typ, sender.as_unicode(), body
+        if body == None:
+            return True
+        body = string.strip(body)
+
         if typ in ('normal', 'chat'):
             try:
                 user, jid_resource = storage.get_user(sender.as_unicode())
